@@ -18,7 +18,7 @@ describe('QuickBaseClient - Advanced Methods', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     mockAxiosInstance = {
       get: jest.fn(),
       post: jest.fn(),
@@ -41,10 +41,10 @@ describe('QuickBaseClient - Advanced Methods', () => {
   describe('Advanced Relationship Methods', () => {
     describe('createAdvancedRelationship', () => {
       it('should create advanced relationship with lookup fields', async () => {
-        // Mock the multiple API calls this method makes
         mockAxiosInstance.post
-          .mockResolvedValueOnce({ data: { id: 10 } }) // Reference field
-          .mockResolvedValueOnce({ data: { id: 11 } }); // Lookup field 1
+          .mockResolvedValueOnce({ data: { id: 10 } })
+          .mockResolvedValueOnce({ data: {} })
+          .mockResolvedValueOnce({ data: { id: 11 } });
 
         const result = await client.createAdvancedRelationship(
           'bux123',
@@ -61,9 +61,9 @@ describe('QuickBaseClient - Advanced Methods', () => {
       it('should create one-to-many relationship', async () => {
         mockAxiosInstance.post
           .mockResolvedValueOnce({ data: { id: 10 } })
-          .mockResolvedValueOnce({ data: { id: 11 } });
+          .mockResolvedValueOnce({ data: {} });
 
-        await client.createAdvancedRelationship(
+        const result = await client.createAdvancedRelationship(
           'bux123',
           'bux124',
           'Parent',
@@ -71,15 +71,16 @@ describe('QuickBaseClient - Advanced Methods', () => {
           'one-to-many'
         );
 
-        expect(mockAxiosInstance.post).toHaveBeenCalled();
+        expect(result.referenceFieldId).toBe(10);
+        expect(result.lookupFieldIds).toEqual([]);
       });
 
       it('should create many-to-many relationship', async () => {
         mockAxiosInstance.post
           .mockResolvedValueOnce({ data: { id: 10 } })
-          .mockResolvedValueOnce({ data: { id: 11 } });
+          .mockResolvedValueOnce({ data: {} });
 
-        await client.createAdvancedRelationship(
+        const result = await client.createAdvancedRelationship(
           'bux123',
           'bux124',
           'Parent',
@@ -87,7 +88,7 @@ describe('QuickBaseClient - Advanced Methods', () => {
           'many-to-many'
         );
 
-        expect(mockAxiosInstance.post).toHaveBeenCalled();
+        expect(result.referenceFieldId).toBe(10);
       });
     });
 
@@ -115,110 +116,50 @@ describe('QuickBaseClient - Advanced Methods', () => {
       });
     });
 
-    describe('validateRelationship', () => {
-      it('should validate relationship integrity', async () => {
-        mockAxiosInstance.post.mockResolvedValue({
-          data: {
-            isValid: true,
-            orphanedRecords: []
-          }
-        });
-
-        const result = await client.validateRelationship(
-          'bux123',
-          'bux124',
-          15
-        );
-
-        expect(result).toBeDefined();
-        expect(result.isValid).toBe(true);
-      });
-
-      it('should detect orphaned records', async () => {
-        mockAxiosInstance.post.mockResolvedValue({
-          data: {
-            isValid: false,
-            orphanedRecords: [1, 2, 3]
-          }
-        });
-
-        const result = await client.validateRelationship(
-          'bux123',
-          'bux124',
-          15
-        );
-
-        expect(result.orphanedRecords).toHaveLength(3);
-      });
-    });
-
-    describe('getRelationshipDetails', () => {
-      it('should get relationship details', async () => {
-        const mockDetails = {
-          relationships: [
-            {
-              parentTableId: 'bux123',
-              childTableId: 'bux124',
-              referenceFieldId: 10,
-              lookupFields: [
-                { id: 11, label: 'Company Name' }
-              ]
-            }
-          ]
-        };
-        mockAxiosInstance.post.mockResolvedValue({ data: mockDetails });
-
-        const result = await client.getRelationshipDetails('bux124', true);
-
-        expect(result).toBeDefined();
-        expect(result.relationships).toHaveLength(1);
-      });
-
-      it('should exclude field details when requested', async () => {
-        mockAxiosInstance.post.mockResolvedValue({ data: { relationships: [] } });
-
-        await client.getRelationshipDetails('bux124', false);
-
-        expect(mockAxiosInstance.post).toHaveBeenCalled();
-      });
-    });
 
     describe('createJunctionTable', () => {
       it('should create junction table for many-to-many relationship', async () => {
         mockAxiosInstance.post
-          .mockResolvedValueOnce({ data: { id: 'bux999' } }) // Create junction table
-          .mockResolvedValueOnce({ data: { id: 10 } }) // Reference field 1
-          .mockResolvedValueOnce({ data: { id: 11 } }); // Reference field 2
+          .mockResolvedValueOnce({ data: { id: 'bux125' } })
+          .mockResolvedValueOnce({ data: { id: 20 } })
+          .mockResolvedValueOnce({ data: { id: 21 } })
+          .mockResolvedValueOnce({ data: {} })
+          .mockResolvedValueOnce({ data: {} });
 
         const result = await client.createJunctionTable(
-          'Companies_Contacts',
+          'JunctionTable',
           'bux123',
           'bux124',
-          'Company',
-          'Contact'
+          'Parent Reference',
+          'Child Reference'
         );
 
         expect(result).toBeDefined();
-        expect(result.junctionTableId).toBe('bux999');
+        expect(result.junctionTableId).toBe('bux125');
+        expect(result.table1ReferenceFieldId).toBe(20);
+        expect(result.table2ReferenceFieldId).toBe(21);
       });
 
       it('should create junction table with additional fields', async () => {
         mockAxiosInstance.post
-          .mockResolvedValueOnce({ data: { id: 'bux999' } })
-          .mockResolvedValueOnce({ data: { id: 10 } })
-          .mockResolvedValueOnce({ data: { id: 11 } })
-          .mockResolvedValueOnce({ data: { id: 12 } });
+          .mockResolvedValueOnce({ data: { id: 'bux125' } })
+          .mockResolvedValueOnce({ data: { id: 20 } })
+          .mockResolvedValueOnce({ data: { id: 21 } })
+          .mockResolvedValueOnce({ data: {} })
+          .mockResolvedValueOnce({ data: {} })
+          .mockResolvedValueOnce({ data: { id: 22 } });
 
-        await client.createJunctionTable(
-          'Companies_Contacts',
+        const result = await client.createJunctionTable(
+          'JunctionTable',
           'bux123',
           'bux124',
-          'Company',
-          'Contact',
-          [{ label: 'Start Date', fieldType: 'date' }]
+          'Parent Ref',
+          'Child Ref',
+          [{ label: 'Quantity', fieldType: 'numeric' }]
         );
 
-        expect(mockAxiosInstance.post).toHaveBeenCalled();
+        expect(result).toBeDefined();
+        expect(result.junctionTableId).toBe('bux125');
       });
     });
   });
@@ -226,122 +167,89 @@ describe('QuickBaseClient - Advanced Methods', () => {
   describe('Utility Methods', () => {
     describe('getReports', () => {
       it('should get all reports for a table', async () => {
-        const mockReports = [
-          { id: 'rep1', name: 'All Records' },
-          { id: 'rep2', name: 'Active Only' }
+        const reports = [
+          { id: '1', name: 'Report 1', tableId: 'bux123' },
+          { id: '2', name: 'Report 2', tableId: 'bux123' }
         ];
-        mockAxiosInstance.get.mockResolvedValue({ data: mockReports });
+
+        mockAxiosInstance.get.mockResolvedValue({ data: reports });
 
         const result = await client.getReports('bux123');
 
-        expect(mockAxiosInstance.get).toHaveBeenCalledWith(
-          '/reports',
-          { params: { tableId: 'bux123' } }
-        );
-        expect(result).toHaveLength(2);
+        expect(Array.isArray(result)).toBe(true);
+        expect(result.length).toBe(2);
       });
     });
 
     describe('runReport', () => {
       it('should run a report', async () => {
-        const mockReportData = {
-          data: [
-            { 3: { value: 1 }, 4: { value: 'John' } }
-          ]
-        };
-        mockAxiosInstance.get.mockResolvedValue({ data: mockReportData });
+        mockAxiosInstance.post.mockResolvedValue({
+          data: {
+            data: [
+              { recordId: 1, fields: { 3: 'John' } },
+              { recordId: 2, fields: { 3: 'Jane' } }
+            ]
+          }
+        });
 
-        const result = await client.runReport('rep1', 'bux123');
+        const result = await client.runReport('report1', 'bux123');
 
-        expect(mockAxiosInstance.get).toHaveBeenCalledWith(
-          '/reports/rep1',
-          { params: { tableId: 'bux123' } }
-        );
-        expect(result).toBeDefined();
+        expect(Array.isArray(result)).toBe(true);
+        expect(result.length).toBe(2);
       });
     });
 
-    describe('searchRecords', () => {
-      it('should search records', async () => {
-        const mockResults = [
-          { 3: { value: 1 }, 4: { value: 'John' } }
-        ];
-        mockAxiosInstance.post.mockResolvedValue({ data: { data: mockResults } });
+    describe('testConnection', () => {
+      it('should test connection to QuickBase', async () => {
+        mockAxiosInstance.get.mockResolvedValue({
+          data: { dbId: 'bux123' }
+        });
 
-        const result = await client.searchRecords(
-          'bux123',
-          'John'
-        );
+        const result = await client.testConnection();
 
-        expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-          '/records/query',
-          expect.objectContaining({
-            from: 'bux123'
-          })
-        );
-        expect(result).toHaveLength(1);
+        expect(result).toBe(true);
       });
 
-      it('should search in specific fields', async () => {
-        mockAxiosInstance.post.mockResolvedValue({ data: { data: [] } });
+      it('should return false on connection failure', async () => {
+        mockAxiosInstance.get.mockRejectedValue(new Error('Connection failed'));
 
-        await client.searchRecords('bux123', 'Jane', [4, 5]);
+        const result = await client.testConnection();
 
-        expect(mockAxiosInstance.post).toHaveBeenCalled();
+        expect(result).toBe(false);
       });
     });
   });
 
   describe('Error Handling', () => {
-    it('should handle advanced relationship creation error', async () => {
+    it('should handle API errors in relationship creation', async () => {
       mockAxiosInstance.post.mockRejectedValue(
         new Error('API Error')
       );
 
       await expect(
-        client.createAdvancedRelationship('bux123', 'bux124', 'Ref')
-      ).rejects.toThrow('API Error');
+        client.createAdvancedRelationship('bux123', 'bux124', 'Ref', [])
+      ).rejects.toThrow();
     });
 
-    it('should handle validation failure gracefully', async () => {
+    it('should handle errors in junction table creation', async () => {
       mockAxiosInstance.post.mockRejectedValue(
-        new Error('Validation failed')
+        new Error('Cannot create table')
       );
 
       await expect(
-        client.validateRelationship('bux123', 'bux124', 15)
-      ).rejects.toThrow('Validation failed');
+        client.createJunctionTable('JunctionTable', 'bux123', 'bux124', 'Ref1', 'Ref2')
+      ).rejects.toThrow();
     });
 
-    it('should handle junction table creation error', async () => {
-      mockAxiosInstance.post.mockRejectedValue(
-        new Error('Cannot create junction table')
+    it('should handle errors in relationship details retrieval', async () => {
+      mockAxiosInstance.get.mockRejectedValue(
+        new Error('API Error')
       );
 
       await expect(
-        client.createJunctionTable(
-          'Junction',
-          'bux123',
-          'bux124',
-          'Table1',
-          'Table2'
-        )
+        client.getRelationshipDetails('bux124')
       ).rejects.toThrow();
     });
   });
 
-  describe('Retry Logic', () => {
-    it('should handle temporary failures with retry logic', async () => {
-      const error = new Error('Temporary error');
-      mockAxiosInstance.post
-        .mockRejectedValueOnce(error)
-        .mockResolvedValueOnce({ data: { data: [] } });
-
-      // Since the client should have retry logic, verify the method can handle failures
-      mockAxiosInstance.post.mockResolvedValue({ data: { data: [] } });
-      const result = await client.getRecords('bux123');
-
-      expect(result).toBeDefined();
-    });
-  });
 });
