@@ -81,6 +81,7 @@ class QuickBaseMCPServer {
   private server: Server;
   private qbClient: QuickBaseClient;
   private allowDestructive: boolean;
+  private readOnly: boolean;
 
   constructor() {
     // Validate environment variables
@@ -97,6 +98,7 @@ class QuickBaseMCPServer {
     }
 
     this.allowDestructive = String(process.env.QB_ALLOW_DESTRUCTIVE || '').toLowerCase() === 'true';
+    this.readOnly = String(process.env.QB_READONLY || '').toLowerCase() === 'true';
 
     this.qbClient = new QuickBaseClient(config);
     this.server = new Server(
@@ -127,6 +129,20 @@ class QuickBaseMCPServer {
         'quickbase_delete_record'
       ]);
 
+      const readOnlyAllowedTools = new Set([
+        'quickbase_get_app_info',
+        'quickbase_get_tables',
+        'quickbase_test_connection',
+        'quickbase_get_table_info',
+        'quickbase_get_table_fields',
+        'quickbase_query_records',
+        'quickbase_get_record',
+        'quickbase_search_records',
+        'quickbase_get_relationships',
+        'quickbase_get_reports',
+        'quickbase_run_report'
+      ]);
+
       const confirmationRequiredTools = new Set([
         'quickbase_create_table',
         'quickbase_create_field',
@@ -140,6 +156,13 @@ class QuickBaseMCPServer {
       const confirmed = typeof args === 'object' && args !== null && (args as any).confirm === true;
 
       try {
+        if (this.readOnly && !readOnlyAllowedTools.has(name)) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `Server is running in read-only mode (QB_READONLY=true). Tool \"${name}\" is not allowed.`
+          );
+        }
+
         if (destructiveTools.has(name) && !this.allowDestructive) {
           throw new McpError(
             ErrorCode.InvalidRequest,

@@ -272,6 +272,11 @@ To enable QuickBase API request/response logs (off by default):
 QB_LOG_API=true
 ```
 
+To force read-only mode (blocks create/update/delete even if confirm flags are provided):
+```bash
+QB_READONLY=true
+```
+
 ## Implementation Notes
 
 This server provides the maximum flexibility for QuickBase operations by:
