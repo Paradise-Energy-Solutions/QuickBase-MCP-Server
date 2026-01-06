@@ -49,6 +49,8 @@ cd quickbase-mcp-server
 npm install
 ```
 
+> For CI/release builds, prefer `npm ci` (requires `package-lock.json`) for reproducible installs.
+
 2. **Copy environment configuration:**
 ```bash
 cp env.example .env
@@ -232,6 +234,13 @@ npm run dev
 ### Run tests:
 ```bash
 npm test
+```
+
+`npm test` runs a local, non-network smoke test.
+
+To run the QuickBase integration test (requires `QB_REALM`, `QB_USER_TOKEN`, `QB_APP_ID`):
+```bash
+npm run test:integration
 ```
 
 ## Troubleshooting
