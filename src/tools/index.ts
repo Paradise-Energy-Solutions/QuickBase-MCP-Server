@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 // Tool parameter schemas
 const TableIdSchema = z.object({
-  tableId: z.string().min(3).max(64).describe('QuickBase table ID (e.g., "bu65pc8px")')
+  tableId: z.string().min(3).max(64).describe('QuickBase table ID (e.g., "buXXXXXXX")')
 });
 
 const RecordIdSchema = z.object({

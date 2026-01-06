@@ -166,7 +166,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 {
   "name": "quickbase_create_field",
   "arguments": {
-    "tableId": "bu65pc8px",
+    "tableId": "your_table_id_here",
     "label": "Project Status",
     "fieldType": "text_choice",
     "choices": ["Planning", "Active", "Complete", "On Hold"],
@@ -180,7 +180,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 {
   "name": "quickbase_query_records",
   "arguments": {
-    "tableId": "bu65pc8px",
+    "tableId": "your_table_id_here",
     "where": "{6.EX.'John'}",
     "top": 10,
     "sortBy": [{"fieldId": 3, "order": "DESC"}]
@@ -193,7 +193,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 {
   "name": "quickbase_create_record",
   "arguments": {
-    "tableId": "bu65pc8px",
+    "tableId": "your_table_id_here",
     "fields": {
       "6": {"value": "John Doe"},
       "7": {"value": "123 Main St"},

@@ -26,9 +26,9 @@ Create a `.env` file with your QuickBase credentials:
 
 ```env
 # Required
-QB_REALM=seanngates.quickbase.com
+QB_REALM=yourrealm.quickbase.com
 QB_USER_TOKEN=your_user_token_here
-QB_APP_ID=btr3r3fk5
+QB_APP_ID=your_app_id_here
 
 # Optional
 QB_DEFAULT_TIMEOUT=30000
@@ -40,7 +40,7 @@ MCP_SERVER_VERSION=1.0.0
 ### 2. Getting Your User Token
 
 1. **Login to QuickBase**
-   - Go to https://seanngates.quickbase.com
+  - Go to https://yourrealm.quickbase.com
    - Navigate to your user account settings
 
 2. **Create User Token**
@@ -64,11 +64,11 @@ Add to your Claude Desktop configuration file:
   "mcpServers": {
     "quickbase": {
       "command": "node",
-      "args": ["C:/Users/ljcir/Downloads/USWorkflow/USWorkflow/quickbase-mcp-server/dist/index.js"],
+      "args": ["/path/to/quickbase-mcp-server/dist/index.js"],
       "env": {
-        "QB_REALM": "seanngates.quickbase.com",
+        "QB_REALM": "yourrealm.quickbase.com",
         "QB_USER_TOKEN": "your_actual_token_here",
-        "QB_APP_ID": "btr3r3fk5"
+        "QB_APP_ID": "your_app_id_here"
       }
     }
   }
@@ -148,7 +148,7 @@ Based on your `quickbase-mapping.json`, here are the key implementations you can
 
 ```javascript
 // Example: Add Sales Rep ID to Masters table
-await client.createField('bu7kkqifj', {
+await client.createField('your_table_id_here', {
   label: 'Sales Rep ID',
   fieldType: 'numeric',
   required: false
@@ -160,9 +160,9 @@ await client.createField('bu7kkqifj', {
 ```javascript
 // Create relationship between Sales Reps and Masters
 await client.createRelationship(
-  'bu7dnv428', // Sales Representatives (parent)
-  'bu7kkqifj', // Masters (child)
-  88 // Sales Rep ID field in Masters table
+  'your_parent_table_id_here', // parent table
+  'your_child_table_id_here',  // child table
+  123 // field ID in child table
 );
 ```
 
@@ -224,9 +224,9 @@ autoSetup().catch(console.error);
 Set these environment variables in your production environment:
 
 ```bash
-export QB_REALM=seanngates.quickbase.com
+export QB_REALM=yourrealm.quickbase.com
 export QB_USER_TOKEN=your_production_token
-export QB_APP_ID=btr3r3fk5
+export QB_APP_ID=your_app_id_here
 export QB_DEFAULT_TIMEOUT=30000
 export QB_MAX_RETRIES=3
 ```

@@ -10,8 +10,12 @@ async function testDirectAPI() {
     realm: process.env.QB_REALM,
     userToken: process.env.QB_USER_TOKEN,
     appId: process.env.QB_APP_ID,
-    leadsTableId: 'bu65pc8px' // From your mapping file
+    leadsTableId: process.env.QB_TEST_TABLE_ID
   };
+
+  if (!config.leadsTableId) {
+    throw new Error('Missing QB_TEST_TABLE_ID. Set it to a table ID like "buXXXXXXX" before running this integration test.');
+  }
 
   console.log('Configuration:');
   console.log(`  Realm: ${config.realm}`);
