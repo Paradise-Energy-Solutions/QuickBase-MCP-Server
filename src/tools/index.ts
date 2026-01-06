@@ -3,22 +3,22 @@ import { z } from 'zod';
 
 // Tool parameter schemas
 const TableIdSchema = z.object({
-  tableId: z.string().describe('QuickBase table ID (e.g., "bu65pc8px")')
+  tableId: z.string().min(3).max(64).describe('QuickBase table ID (e.g., "bu65pc8px")')
 });
 
 const RecordIdSchema = z.object({
-  tableId: z.string().describe('QuickBase table ID'),
+  tableId: z.string().min(3).max(64).describe('QuickBase table ID'),
   recordId: z.number().describe('Record ID number')
 });
 
 const CreateTableSchema = z.object({
-  name: z.string().describe('Table name'),
-  description: z.string().optional().describe('Table description')
+  name: z.string().min(1).max(128).describe('Table name'),
+  description: z.string().max(1024).optional().describe('Table description')
 });
 
 const CreateFieldSchema = z.object({
-  tableId: z.string().describe('Table ID to add field to'),
-  label: z.string().describe('Field label/name'),
+  tableId: z.string().min(3).max(64).describe('Table ID to add field to'),
+  label: z.string().min(1).max(128).describe('Field label/name'),
   fieldType: z.enum([
     'text', 'text_choice', 'text_multiline', 'richtext', 'numeric', 
     'currency', 'percent', 'date', 'datetime', 'checkbox', 'email', 
@@ -26,51 +26,51 @@ const CreateFieldSchema = z.object({
   ]).describe('Type of field'),
   required: z.boolean().default(false).describe('Whether field is required'),
   unique: z.boolean().default(false).describe('Whether field must be unique'),
-  choices: z.array(z.string()).optional().describe('Choices for choice fields'),
-  formula: z.string().optional().describe('Formula for formula fields'),
-  lookupTableId: z.string().optional().describe('Table ID for lookup fields'),
+  choices: z.array(z.string().max(256)).max(500).optional().describe('Choices for choice fields'),
+  formula: z.string().max(10000).optional().describe('Formula for formula fields'),
+  lookupTableId: z.string().min(3).max(64).optional().describe('Table ID for lookup fields'),
   lookupFieldId: z.number().optional().describe('Field ID for lookup fields')
 });
 
 const QueryRecordsSchema = z.object({
-  tableId: z.string().describe('Table ID to query'),
+  tableId: z.string().min(3).max(64).describe('Table ID to query'),
   select: z.array(z.number()).optional().describe('Field IDs to select'),
-  where: z.string().optional().describe('QuickBase query filter'),
+  where: z.string().max(5000).optional().describe('QuickBase query filter'),
   sortBy: z.array(z.object({
     fieldId: z.number(),
     order: z.enum(['ASC', 'DESC']).default('ASC')
   })).optional().describe('Sort criteria'),
-  top: z.number().optional().describe('Max number of records'),
-  skip: z.number().optional().describe('Number of records to skip')
+  top: z.number().int().min(1).max(1000).optional().describe('Max number of records'),
+  skip: z.number().int().min(0).max(100000).optional().describe('Number of records to skip')
 });
 
 const CreateRecordSchema = z.object({
-  tableId: z.string().describe('Table ID to create record in'),
+  tableId: z.string().min(3).max(64).describe('Table ID to create record in'),
   fields: z.record(z.any()).describe('Field values as fieldId: value pairs')
 });
 
 const UpdateRecordSchema = z.object({
-  tableId: z.string().describe('Table ID'),
+  tableId: z.string().min(3).max(64).describe('Table ID'),
   recordId: z.number().describe('Record ID to update'),
   fields: z.record(z.any()).describe('Field values to update as fieldId: value pairs')
 });
 
 const BulkCreateSchema = z.object({
-  tableId: z.string().describe('Table ID'),
+  tableId: z.string().min(3).max(64).describe('Table ID'),
   records: z.array(z.object({
     fields: z.record(z.any())
-  })).describe('Array of records to create')
+  })).max(250).describe('Array of records to create')
 });
 
 const SearchRecordsSchema = z.object({
-  tableId: z.string().describe('Table ID to search'),
-  searchTerm: z.string().describe('Text to search for'),
+  tableId: z.string().min(3).max(64).describe('Table ID to search'),
+  searchTerm: z.string().min(1).max(200).describe('Text to search for'),
   fieldIds: z.array(z.number()).optional().describe('Field IDs to search in')
 });
 
 const CreateRelationshipSchema = z.object({
-  parentTableId: z.string().describe('Parent table ID'),
-  childTableId: z.string().describe('Child table ID'),
+  parentTableId: z.string().min(3).max(64).describe('Parent table ID'),
+  childTableId: z.string().min(3).max(64).describe('Child table ID'),
   foreignKeyFieldId: z.number().describe('Foreign key field ID in child table')
 });
 

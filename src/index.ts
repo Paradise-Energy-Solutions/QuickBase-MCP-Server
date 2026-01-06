@@ -9,9 +9,69 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { QuickBaseClient } from './quickbase/client.js';
-import { quickbaseTools } from './tools/index.js';
+import {
+  quickbaseTools,
+  TableIdSchema,
+  RecordIdSchema,
+  CreateTableSchema,
+  CreateFieldSchema,
+  QueryRecordsSchema,
+  CreateRecordSchema,
+  UpdateRecordSchema,
+  BulkCreateSchema,
+  SearchRecordsSchema,
+  CreateRelationshipSchema
+} from './tools/index.js';
 import { QuickBaseConfig } from './types/quickbase.js';
 import dotenv from 'dotenv';
+import { z } from 'zod';
+
+function formatErrorForLog(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  try {
+    return typeof error === 'string' ? error : JSON.stringify(error);
+  } catch {
+    return 'Unknown error';
+  }
+}
+
+function parseArgs<T>(toolName: string, schema: { parse: (input: unknown) => T }, args: unknown): T {
+  try {
+    return schema.parse(args ?? {});
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Invalid arguments';
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `Invalid arguments for ${toolName}: ${message}`
+    );
+  }
+}
+
+const UpdateFieldArgsSchema = z.object({
+  tableId: z.string(),
+  fieldId: z.number(),
+  label: z.string().optional(),
+  required: z.boolean().optional(),
+  choices: z.array(z.string()).optional()
+});
+
+const DeleteFieldArgsSchema = z.object({
+  tableId: z.string(),
+  fieldId: z.number()
+});
+
+const GetRecordArgsSchema = z.object({
+  tableId: z.string(),
+  recordId: z.number(),
+  fieldIds: z.array(z.number()).optional()
+});
+
+const RunReportArgsSchema = z.object({
+  tableId: z.string(),
+  reportId: z.string()
+});
 
 // Load environment variables
 dotenv.config();
@@ -19,6 +79,7 @@ dotenv.config();
 class QuickBaseMCPServer {
   private server: Server;
   private qbClient: QuickBaseClient;
+  private allowDestructive: boolean;
 
   constructor() {
     // Validate environment variables
@@ -33,6 +94,8 @@ class QuickBaseMCPServer {
     if (!config.realm || !config.userToken || !config.appId) {
       throw new Error('Missing required environment variables: QB_REALM, QB_USER_TOKEN, QB_APP_ID');
     }
+
+    this.allowDestructive = String(process.env.QB_ALLOW_DESTRUCTIVE || '').toLowerCase() === 'true';
 
     this.qbClient = new QuickBaseClient(config);
     this.server = new Server(
@@ -57,7 +120,20 @@ class QuickBaseMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
+      const destructiveTools = new Set([
+        'quickbase_delete_table',
+        'quickbase_delete_field',
+        'quickbase_delete_record'
+      ]);
+
       try {
+        if (destructiveTools.has(name) && !this.allowDestructive) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `Destructive tool \"${name}\" is disabled. Set QB_ALLOW_DESTRUCTIVE=true to enable delete operations.`
+          );
+        }
+
         switch (name) {
           // ========== APPLICATION TOOLS ==========
           case 'quickbase_get_app_info':
@@ -93,12 +169,10 @@ class QuickBaseMCPServer {
 
           // ========== TABLE TOOLS ==========
           case 'quickbase_create_table':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const createTableArgs = parseArgs('quickbase_create_table', CreateTableSchema, args);
             const tableId = await this.qbClient.createTable({
-              name: args.name as string,
-              description: args.description as string
+              name: createTableArgs.name,
+              description: createTableArgs.description
             });
             return {
               content: [
@@ -110,60 +184,52 @@ class QuickBaseMCPServer {
             };
 
           case 'quickbase_get_table_info':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const tableIdArgs = parseArgs('quickbase_get_table_info', TableIdSchema, args);
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(await this.qbClient.getTableInfo(args.tableId as string), null, 2),
+                  text: JSON.stringify(await this.qbClient.getTableInfo(tableIdArgs.tableId), null, 2),
                 },
               ],
             };
 
           case 'quickbase_delete_table':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            await this.qbClient.deleteTable(args.tableId as string);
+            const deleteTableArgs = parseArgs('quickbase_delete_table', TableIdSchema, args);
+            await this.qbClient.deleteTable(deleteTableArgs.tableId);
             return {
               content: [
                 {
                   type: 'text',
-                  text: `Table ${args.tableId} deleted successfully`,
+                  text: `Table ${deleteTableArgs.tableId} deleted successfully`,
                 },
               ],
             };
 
           // ========== FIELD TOOLS ==========
           case 'quickbase_get_table_fields':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const getFieldsArgs = parseArgs('quickbase_get_table_fields', TableIdSchema, args);
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(await this.qbClient.getTableFields(args.tableId as string), null, 2),
+                  text: JSON.stringify(await this.qbClient.getTableFields(getFieldsArgs.tableId), null, 2),
                 },
               ],
             };
 
           case 'quickbase_create_field':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            const fieldId = await this.qbClient.createField(args.tableId as string, {
-              label: args.label as string,
-              fieldType: args.fieldType as any,
-              required: (args.required as boolean) || false,
-              unique: (args.unique as boolean) || false,
-              choices: args.choices as string[],
-              formula: args.formula as string,
-              lookupReference: args.lookupTableId ? {
-                tableId: args.lookupTableId as string,
-                fieldId: args.lookupFieldId as number
+            const createFieldArgs = parseArgs('quickbase_create_field', CreateFieldSchema, args);
+            const fieldId = await this.qbClient.createField(createFieldArgs.tableId, {
+              label: createFieldArgs.label,
+              fieldType: createFieldArgs.fieldType as any,
+              required: createFieldArgs.required,
+              unique: createFieldArgs.unique,
+              choices: createFieldArgs.choices,
+              formula: createFieldArgs.formula,
+              lookupReference: createFieldArgs.lookupTableId ? {
+                tableId: createFieldArgs.lookupTableId,
+                fieldId: createFieldArgs.lookupFieldId as number
               } : undefined
             });
             return {
@@ -176,48 +242,42 @@ class QuickBaseMCPServer {
             };
 
           case 'quickbase_update_field':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            await this.qbClient.updateField(args.tableId as string, args.fieldId as number, {
-              label: args.label as string,
-              required: args.required as boolean,
-              choices: args.choices as string[]
+            const updateFieldArgs = parseArgs('quickbase_update_field', UpdateFieldArgsSchema, args);
+            await this.qbClient.updateField(updateFieldArgs.tableId, updateFieldArgs.fieldId, {
+              label: updateFieldArgs.label,
+              required: updateFieldArgs.required,
+              choices: updateFieldArgs.choices
             });
             return {
               content: [
                 {
                   type: 'text',
-                  text: `Field ${args.fieldId} updated successfully`,
+                  text: `Field ${updateFieldArgs.fieldId} updated successfully`,
                 },
               ],
             };
 
           case 'quickbase_delete_field':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            await this.qbClient.deleteField(args.tableId as string, args.fieldId as number);
+            const deleteFieldArgs = parseArgs('quickbase_delete_field', DeleteFieldArgsSchema, args);
+            await this.qbClient.deleteField(deleteFieldArgs.tableId, deleteFieldArgs.fieldId);
             return {
               content: [
                 {
                   type: 'text',
-                  text: `Field ${args.fieldId} deleted successfully`,
+                  text: `Field ${deleteFieldArgs.fieldId} deleted successfully`,
                 },
               ],
             };
 
           // ========== RECORD TOOLS ==========
           case 'quickbase_query_records':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            const records = await this.qbClient.getRecords(args.tableId as string, {
-              select: args.select as number[],
-              where: args.where as string,
-              sortBy: args.sortBy as any[],
-              top: args.top as number,
-              skip: args.skip as number
+            const queryArgs = parseArgs('quickbase_query_records', QueryRecordsSchema, args);
+            const records = await this.qbClient.getRecords(queryArgs.tableId, {
+              select: queryArgs.select,
+              where: queryArgs.where,
+              sortBy: queryArgs.sortBy as any[],
+              top: queryArgs.top,
+              skip: queryArgs.skip
             });
             return {
               content: [
@@ -229,14 +289,8 @@ class QuickBaseMCPServer {
             };
 
           case 'quickbase_get_record':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            const record = await this.qbClient.getRecord(
-              args.tableId as string, 
-              args.recordId as number, 
-              args.fieldIds as number[]
-            );
+            const getRecordArgs = parseArgs('quickbase_get_record', GetRecordArgsSchema, args);
+            const record = await this.qbClient.getRecord(getRecordArgs.tableId, getRecordArgs.recordId, getRecordArgs.fieldIds);
             return {
               content: [
                 {
@@ -247,11 +301,9 @@ class QuickBaseMCPServer {
             };
 
           case 'quickbase_create_record':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            const newRecordId = await this.qbClient.createRecord(args.tableId as string, {
-              fields: args.fields as Record<string, any>
+            const createRecordArgs = parseArgs('quickbase_create_record', CreateRecordSchema, args);
+            const newRecordId = await this.qbClient.createRecord(createRecordArgs.tableId, {
+              fields: createRecordArgs.fields as Record<string, any>
             });
             return {
               content: [
@@ -263,44 +315,34 @@ class QuickBaseMCPServer {
             };
 
           case 'quickbase_update_record':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            await this.qbClient.updateRecord(
-              args.tableId as string, 
-              args.recordId as number, 
-              args.fields as Record<string, any>
-            );
+            const updateRecordArgs = parseArgs('quickbase_update_record', UpdateRecordSchema, args);
+            await this.qbClient.updateRecord(updateRecordArgs.tableId, updateRecordArgs.recordId, updateRecordArgs.fields as Record<string, any>);
             return {
               content: [
                 {
                   type: 'text',
-                  text: `Record ${args.recordId} updated successfully`,
+                  text: `Record ${updateRecordArgs.recordId} updated successfully`,
                 },
               ],
             };
 
           case 'quickbase_delete_record':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
-            await this.qbClient.deleteRecord(args.tableId as string, args.recordId as number);
+            const deleteRecordArgs = parseArgs('quickbase_delete_record', RecordIdSchema, args);
+            await this.qbClient.deleteRecord(deleteRecordArgs.tableId, deleteRecordArgs.recordId);
             return {
               content: [
                 {
                   type: 'text',
-                  text: `Record ${args.recordId} deleted successfully`,
+                  text: `Record ${deleteRecordArgs.recordId} deleted successfully`,
                 },
               ],
             };
 
           case 'quickbase_bulk_create_records':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const bulkCreateArgs = parseArgs('quickbase_bulk_create_records', BulkCreateSchema, args);
             const recordIds = await this.qbClient.createRecords(
-              args.tableId as string, 
-              args.records as any[]
+              bulkCreateArgs.tableId,
+              bulkCreateArgs.records as any[]
             );
             return {
               content: [
@@ -312,13 +354,11 @@ class QuickBaseMCPServer {
             };
 
           case 'quickbase_search_records':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const searchArgs = parseArgs('quickbase_search_records', SearchRecordsSchema, args);
             const searchResults = await this.qbClient.searchRecords(
-              args.tableId as string, 
-              args.searchTerm as string, 
-              args.fieldIds as number[]
+              searchArgs.tableId,
+              searchArgs.searchTerm,
+              searchArgs.fieldIds
             );
             return {
               content: [
@@ -331,60 +371,52 @@ class QuickBaseMCPServer {
 
           // ========== RELATIONSHIP TOOLS ==========
           case 'quickbase_create_relationship':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const createRelationshipArgs = parseArgs('quickbase_create_relationship', CreateRelationshipSchema, args);
             await this.qbClient.createRelationship(
-              args.parentTableId as string,
-              args.childTableId as string,
-              args.foreignKeyFieldId as number
+              createRelationshipArgs.parentTableId,
+              createRelationshipArgs.childTableId,
+              createRelationshipArgs.foreignKeyFieldId
             );
             return {
               content: [
                 {
                   type: 'text',
-                  text: `Relationship created between ${args.parentTableId} and ${args.childTableId}`,
+                  text: `Relationship created between ${createRelationshipArgs.parentTableId} and ${createRelationshipArgs.childTableId}`,
                 },
               ],
             };
 
           case 'quickbase_get_relationships':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const relationshipsArgs = parseArgs('quickbase_get_relationships', TableIdSchema, args);
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(await this.qbClient.getRelationships(args.tableId as string), null, 2),
+                  text: JSON.stringify(await this.qbClient.getRelationships(relationshipsArgs.tableId), null, 2),
                 },
               ],
             };
 
           // ========== UTILITY TOOLS ==========
           case 'quickbase_get_reports':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const reportsArgs = parseArgs('quickbase_get_reports', TableIdSchema, args);
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(await this.qbClient.getReports(args.tableId as string), null, 2),
+                  text: JSON.stringify(await this.qbClient.getReports(reportsArgs.tableId), null, 2),
                 },
               ],
             };
 
           case 'quickbase_run_report':
-            if (!args || typeof args !== 'object') {
-              throw new Error('Invalid arguments');
-            }
+            const runReportArgs = parseArgs('quickbase_run_report', RunReportArgsSchema, args);
             return {
               content: [
                 {
                   type: 'text',
                   text: JSON.stringify(
-                    await this.qbClient.runReport(args.reportId as string, args.tableId as string), 
+                    await this.qbClient.runReport(runReportArgs.reportId as string, runReportArgs.tableId), 
                     null, 
                     2
                   ),
@@ -400,7 +432,7 @@ class QuickBaseMCPServer {
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`Error executing tool ${name}:`, error);
+        console.error(`Error executing tool ${name}: ${formatErrorForLog(error)}`);
         
         throw new McpError(
           ErrorCode.InternalError,
@@ -423,7 +455,7 @@ async function main() {
     const server = new QuickBaseMCPServer();
     await server.run();
   } catch (error) {
-    console.error('Failed to start server:', error);
+    console.error(`Failed to start server: ${formatErrorForLog(error)}`);
     process.exit(1);
   }
 }
