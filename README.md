@@ -232,12 +232,35 @@ npm run dev
 ```
 
 ### Run tests:
+
+#### Unit Tests (with Coverage)
+```bash
+npm run test:unit
+```
+
+Runs 154 comprehensive unit tests with **78.62% code coverage**, exceeding the 70% target. Tests cover:
+- All Zod schema validation (100% coverage)
+- Tool definitions and schemas (100% coverage)
+- Client methods and utilities (89.79% coverage)
+- Error handling and edge cases
+
+For more information, see [TESTING.md](TESTING.md).
+
+#### Watch Mode (Development)
+```bash
+npm run test:unit:watch
+```
+
+Run tests in watch mode for continuous feedback during development.
+
+#### Smoke Test
 ```bash
 npm test
 ```
 
-`npm test` runs a local, non-network smoke test.
+Quick smoke test that verifies tools are loaded correctly (runs before publishing).
 
+#### Integration Test
 To run the QuickBase integration test (requires `QB_REALM`, `QB_USER_TOKEN`, `QB_APP_ID`):
 ```bash
 npm run test:integration
