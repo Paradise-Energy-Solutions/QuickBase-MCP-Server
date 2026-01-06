@@ -84,11 +84,13 @@ const RecordIdSchema = z.object({
 });
 
 const CreateTableSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   name: z.string().min(1).max(128).describe('Table name'),
   description: z.string().max(1024).optional().describe('Table description')
 });
 
 const CreateFieldSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID to add field to'),
   label: z.string().min(1).max(128).describe('Field label/name'),
   fieldType: z.enum([
@@ -117,6 +119,7 @@ const QueryRecordsSchema = z.object({
 });
 
 const CreateRecordSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID to create record in'),
   fields: z.record(z.any())
     .superRefine((v, ctx) => validateFieldPayload(v, ctx))
@@ -124,6 +127,7 @@ const CreateRecordSchema = z.object({
 });
 
 const UpdateRecordSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   recordId: z.number().describe('Record ID to update'),
   fields: z.record(z.any())
@@ -132,6 +136,7 @@ const UpdateRecordSchema = z.object({
 });
 
 const BulkCreateSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   records: z.array(z.object({
     fields: z.record(z.any()).superRefine((v, ctx) => validateFieldPayload(v, ctx))
@@ -145,6 +150,7 @@ const SearchRecordsSchema = z.object({
 });
 
 const CreateRelationshipSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   parentTableId: z.string().min(3).max(64).describe('Parent table ID'),
   childTableId: z.string().min(3).max(64).describe('Child table ID'),
   foreignKeyFieldId: z.number().describe('Foreign key field ID in child table')
@@ -215,10 +221,11 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         name: { type: 'string', description: 'Table name' },
         description: { type: 'string', description: 'Table description' }
       },
-      required: ['name']
+      required: ['confirm', 'name']
     }
   },
 
@@ -265,6 +272,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID to add field to' },
         label: { type: 'string', description: 'Field label/name' },
         fieldType: { 
@@ -279,7 +287,7 @@ export const quickbaseTools: Tool[] = [
         lookupTableId: { type: 'string', description: 'Table ID for lookup fields' },
         lookupFieldId: { type: 'number', description: 'Field ID for lookup fields' }
       },
-      required: ['tableId', 'label', 'fieldType']
+      required: ['confirm', 'tableId', 'label', 'fieldType']
     }
   },
 
@@ -289,13 +297,14 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID' },
         fieldId: { type: 'number', description: 'Field ID to update' },
         label: { type: 'string', description: 'New field label' },
         required: { type: 'boolean', description: 'Whether field is required' },
         choices: { type: 'array', items: { type: 'string' }, description: 'New choices for choice fields' }
       },
-      required: ['tableId', 'fieldId']
+      required: ['confirm', 'tableId', 'fieldId']
     }
   },
 
@@ -360,6 +369,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for data-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID to create record in' },
         fields: { 
           type: 'object', 
@@ -367,7 +377,7 @@ export const quickbaseTools: Tool[] = [
           additionalProperties: true
         }
       },
-      required: ['tableId', 'fields']
+      required: ['confirm', 'tableId', 'fields']
     }
   },
 
@@ -377,6 +387,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for data-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID' },
         recordId: { type: 'number', description: 'Record ID to update' },
         fields: { 
@@ -385,7 +396,7 @@ export const quickbaseTools: Tool[] = [
           additionalProperties: true
         }
       },
-      required: ['tableId', 'recordId', 'fields']
+      required: ['confirm', 'tableId', 'recordId', 'fields']
     }
   },
 
@@ -408,6 +419,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for data-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID' },
         records: {
           type: 'array',
@@ -420,7 +432,7 @@ export const quickbaseTools: Tool[] = [
           description: 'Array of records to create'
         }
       },
-      required: ['tableId', 'records']
+      required: ['confirm', 'tableId', 'records']
     }
   },
 
@@ -445,11 +457,12 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         parentTableId: { type: 'string', description: 'Parent table ID' },
         childTableId: { type: 'string', description: 'Child table ID' },
         foreignKeyFieldId: { type: 'number', description: 'Foreign key field ID in child table' }
       },
-      required: ['parentTableId', 'childTableId', 'foreignKeyFieldId']
+      required: ['confirm', 'parentTableId', 'childTableId', 'foreignKeyFieldId']
     }
   },
 

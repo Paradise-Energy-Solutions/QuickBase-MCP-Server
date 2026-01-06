@@ -50,6 +50,7 @@ function parseArgs<T>(toolName: string, schema: { parse: (input: unknown) => T }
 }
 
 const UpdateFieldArgsSchema = z.object({
+  confirm: z.literal(true),
   tableId: z.string(),
   fieldId: z.number(),
   label: z.string().optional(),
@@ -126,11 +127,30 @@ class QuickBaseMCPServer {
         'quickbase_delete_record'
       ]);
 
+      const confirmationRequiredTools = new Set([
+        'quickbase_create_table',
+        'quickbase_create_field',
+        'quickbase_update_field',
+        'quickbase_create_record',
+        'quickbase_update_record',
+        'quickbase_bulk_create_records',
+        'quickbase_create_relationship'
+      ]);
+
+      const confirmed = typeof args === 'object' && args !== null && (args as any).confirm === true;
+
       try {
         if (destructiveTools.has(name) && !this.allowDestructive) {
           throw new McpError(
             ErrorCode.InvalidRequest,
             `Destructive tool \"${name}\" is disabled. Set QB_ALLOW_DESTRUCTIVE=true to enable delete operations.`
+          );
+        }
+
+        if (confirmationRequiredTools.has(name) && !confirmed) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `Tool \"${name}\" can modify data or schema and requires confirmation. Re-run with { \"confirm\": true, ... }.`
           );
         }
 
