@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ErrorCode,
+  InitializeRequestSchema,
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -105,6 +106,11 @@ class QuickBaseMCPServer {
       {
         name: process.env.MCP_SERVER_NAME || 'quickbase-mcp',
         version: process.env.MCP_SERVER_VERSION || '1.0.0',
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
       }
     );
 
@@ -112,6 +118,20 @@ class QuickBaseMCPServer {
   }
 
   private setupHandlers() {
+    // Initialize the server and declare capabilities
+    this.server.setRequestHandler(InitializeRequestSchema, async () => {
+      return {
+        protocolVersion: '2024-11-05',
+        capabilities: {
+          tools: {},
+        },
+        serverInfo: {
+          name: process.env.MCP_SERVER_NAME || 'quickbase-mcp',
+          version: process.env.MCP_SERVER_VERSION || '1.0.0',
+        },
+      };
+    });
+
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
@@ -120,7 +140,7 @@ class QuickBaseMCPServer {
     });
 
     // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       const { name, arguments: args } = request.params;
 
       const destructiveTools = new Set([
