@@ -24,7 +24,8 @@ import {
   CreateRelationshipSchema
 } from './tools/index.js';
 import { QuickBaseConfig } from './types/quickbase.js';
-import dotenv from 'dotenv';
+import { envFlag, loadDotenv } from './utils/env.js';
+import { assertToolAllowed } from './utils/toolGuards.js';
 import { z } from 'zod';
 
 function formatErrorForLog(error: unknown): string {
@@ -76,7 +77,7 @@ const RunReportArgsSchema = z.object({
 });
 
 // Load environment variables
-dotenv.config();
+loadDotenv(import.meta.url);
 
 class QuickBaseMCPServer {
   private server: Server;
@@ -98,8 +99,8 @@ class QuickBaseMCPServer {
       throw new Error('Missing required environment variables: QB_REALM, QB_USER_TOKEN, QB_APP_ID');
     }
 
-    this.allowDestructive = String(process.env.QB_ALLOW_DESTRUCTIVE || '').toLowerCase() === 'true';
-    this.readOnly = String(process.env.QB_READONLY || '').toLowerCase() === 'true';
+    this.allowDestructive = envFlag('QB_ALLOW_DESTRUCTIVE', false);
+    this.readOnly = envFlag('QB_READONLY', false);
 
     this.qbClient = new QuickBaseClient(config);
     this.server = new Server(
@@ -143,59 +144,13 @@ class QuickBaseMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       const { name, arguments: args } = request.params;
 
-      const destructiveTools = new Set([
-        'quickbase_delete_table',
-        'quickbase_delete_field',
-        'quickbase_delete_record'
-      ]);
-
-      const readOnlyAllowedTools = new Set([
-        'quickbase_get_app_info',
-        'quickbase_get_tables',
-        'quickbase_test_connection',
-        'quickbase_get_table_info',
-        'quickbase_get_table_fields',
-        'quickbase_query_records',
-        'quickbase_get_record',
-        'quickbase_search_records',
-        'quickbase_get_relationships',
-        'quickbase_get_reports',
-        'quickbase_run_report'
-      ]);
-
-      const confirmationRequiredTools = new Set([
-        'quickbase_create_table',
-        'quickbase_create_field',
-        'quickbase_update_field',
-        'quickbase_create_record',
-        'quickbase_update_record',
-        'quickbase_bulk_create_records',
-        'quickbase_create_relationship'
-      ]);
-
-      const confirmed = typeof args === 'object' && args !== null && (args as any).confirm === true;
-
       try {
-        if (this.readOnly && !readOnlyAllowedTools.has(name)) {
-          throw new McpError(
-            ErrorCode.InvalidRequest,
-            `Server is running in read-only mode (QB_READONLY=true). Tool \"${name}\" is not allowed.`
-          );
-        }
-
-        if (destructiveTools.has(name) && !this.allowDestructive) {
-          throw new McpError(
-            ErrorCode.InvalidRequest,
-            `Destructive tool \"${name}\" is disabled. Set QB_ALLOW_DESTRUCTIVE=true to enable delete operations.`
-          );
-        }
-
-        if (confirmationRequiredTools.has(name) && !confirmed) {
-          throw new McpError(
-            ErrorCode.InvalidRequest,
-            `Tool \"${name}\" can modify data or schema and requires confirmation. Re-run with { \"confirm\": true, ... }.`
-          );
-        }
+        assertToolAllowed({
+          name,
+          args,
+          readOnly: this.readOnly,
+          allowDestructive: this.allowDestructive
+        });
 
         switch (name) {
           // ========== APPLICATION TOOLS ==========

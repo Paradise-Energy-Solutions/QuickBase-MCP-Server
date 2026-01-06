@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions } from '../types/quickbase.js';
+import { envFlag } from '../utils/env.js';
 
 export class QuickBaseClient {
   private axios: AxiosInstance;
@@ -28,7 +29,7 @@ export class QuickBaseClient {
 
   constructor(config: QuickBaseConfig) {
     this.config = config;
-    this.logApi = String(process.env.QB_LOG_API || '').toLowerCase() === 'true';
+    this.logApi = envFlag('QB_LOG_API', false);
     this.axios = axios.create({
       baseURL: `https://api.quickbase.com/v1`,
       timeout: config.timeout,
