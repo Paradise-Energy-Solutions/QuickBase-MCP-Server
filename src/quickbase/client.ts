@@ -5,6 +5,26 @@ export class QuickBaseClient {
   private axios: AxiosInstance;
   private config: QuickBaseConfig;
 
+  private static formatErrorForLog(error: unknown): string {
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      const method = error.config?.method?.toUpperCase();
+      const url = error.config?.url;
+      const message = error.message;
+      return `AxiosError${status ? ` ${status}` : ''}${method && url ? ` ${method} ${url}` : ''}: ${message}`;
+    }
+
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    try {
+      return typeof error === 'string' ? error : JSON.stringify(error);
+    } catch {
+      return 'Unknown error';
+    }
+  }
+
   constructor(config: QuickBaseConfig) {
     this.config = config;
     this.axios = axios.create({
@@ -295,7 +315,7 @@ export class QuickBaseClient {
 
       return { referenceFieldId, lookupFieldIds };
     } catch (error) {
-      console.error('Error creating advanced relationship:', error);
+      console.error(`Error creating advanced relationship: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -419,7 +439,7 @@ export class QuickBaseClient {
 
       return result;
     } catch (error) {
-      console.error('Error getting relationship details:', error);
+      console.error(`Error getting relationship details: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -483,7 +503,7 @@ export class QuickBaseClient {
         table2ReferenceFieldId
       };
     } catch (error) {
-      console.error('Error creating junction table:', error);
+      console.error(`Error creating junction table: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -520,9 +540,14 @@ export class QuickBaseClient {
 
   async searchRecords(tableId: string, searchTerm: string, fieldIds?: number[]): Promise<any[]> {
     // This is a simple implementation - you might want to enhance based on your search needs
+    const sanitizedSearchTerm = String(searchTerm)
+      .slice(0, 200)
+      .replace(/[\r\n]/g, ' ')
+      .replace(/'/g, "\\'");
+
     const whereClause = fieldIds 
-      ? fieldIds.map(fieldId => `{${fieldId}.CT.'${searchTerm}'}`).join('OR')
-      : `{6.CT.'${searchTerm}'}OR{7.CT.'${searchTerm}'}`; // Common text fields
+      ? fieldIds.map(fieldId => `{${fieldId}.CT.'${sanitizedSearchTerm}'}`).join('OR')
+      : `{6.CT.'${sanitizedSearchTerm}'}OR{7.CT.'${sanitizedSearchTerm}'}`; // Common text fields
 
     return this.getRecords(tableId, { where: whereClause });
   }
