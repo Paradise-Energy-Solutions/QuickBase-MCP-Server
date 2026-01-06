@@ -267,6 +267,11 @@ Set environment variable:
 DEBUG=quickbase-mcp:*
 ```
 
+To enable QuickBase API request/response logs (off by default):
+```bash
+QB_LOG_API=true
+```
+
 ## Implementation Notes
 
 This server provides the maximum flexibility for QuickBase operations by:

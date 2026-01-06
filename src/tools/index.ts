@@ -1,6 +1,78 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+function validateFieldPayload(payload: unknown, ctx: z.RefinementCtx) {
+  const maxDepth = 4;
+  const maxKeysPerObject = 250;
+  const maxTotalKeys = 2000;
+  const maxStringLength = 10000;
+  const maxArrayLength = 1000;
+
+  let totalKeys = 0;
+
+  const visit = (value: unknown, depth: number) => {
+    if (depth > maxDepth) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Payload nesting too deep (max depth ${maxDepth}).` });
+      return;
+    }
+
+    if (value === null || value === undefined) {
+      return;
+    }
+
+    if (typeof value === 'string') {
+      if (value.length > maxStringLength) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `String value too long (max ${maxStringLength} chars).` });
+      }
+      return;
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length > maxArrayLength) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Array too large (max ${maxArrayLength} items).` });
+        return;
+      }
+      for (const item of value) {
+        visit(item, depth + 1);
+      }
+      return;
+    }
+
+    if (typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      const keys = Object.keys(obj);
+      totalKeys += keys.length;
+
+      if (keys.length > maxKeysPerObject) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Object has too many keys (max ${maxKeysPerObject}).` });
+        return;
+      }
+
+      if (totalKeys > maxTotalKeys) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Payload has too many keys overall (max ${maxTotalKeys}).` });
+        return;
+      }
+
+      for (const k of keys) {
+        if (k.length > 64) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Object key too long (max 64 chars).' });
+          return;
+        }
+        visit(obj[k], depth + 1);
+      }
+      return;
+    }
+
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unsupported value type in payload: ${typeof value}` });
+  };
+
+  visit(payload, 0);
+}
+
 // Tool parameter schemas
 const TableIdSchema = z.object({
   tableId: z.string().min(3).max(64).describe('QuickBase table ID (e.g., "buXXXXXXX")')
@@ -46,19 +118,23 @@ const QueryRecordsSchema = z.object({
 
 const CreateRecordSchema = z.object({
   tableId: z.string().min(3).max(64).describe('Table ID to create record in'),
-  fields: z.record(z.any()).describe('Field values as fieldId: value pairs')
+  fields: z.record(z.any())
+    .superRefine((v, ctx) => validateFieldPayload(v, ctx))
+    .describe('Field values as fieldId: value pairs')
 });
 
 const UpdateRecordSchema = z.object({
   tableId: z.string().min(3).max(64).describe('Table ID'),
   recordId: z.number().describe('Record ID to update'),
-  fields: z.record(z.any()).describe('Field values to update as fieldId: value pairs')
+  fields: z.record(z.any())
+    .superRefine((v, ctx) => validateFieldPayload(v, ctx))
+    .describe('Field values to update as fieldId: value pairs')
 });
 
 const BulkCreateSchema = z.object({
   tableId: z.string().min(3).max(64).describe('Table ID'),
   records: z.array(z.object({
-    fields: z.record(z.any())
+    fields: z.record(z.any()).superRefine((v, ctx) => validateFieldPayload(v, ctx))
   })).max(250).describe('Array of records to create')
 });
 

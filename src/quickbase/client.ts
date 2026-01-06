@@ -4,6 +4,7 @@ import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, Query
 export class QuickBaseClient {
   private axios: AxiosInstance;
   private config: QuickBaseConfig;
+  private logApi: boolean;
 
   private static formatErrorForLog(error: unknown): string {
     if (axios.isAxiosError(error)) {
@@ -27,6 +28,7 @@ export class QuickBaseClient {
 
   constructor(config: QuickBaseConfig) {
     this.config = config;
+    this.logApi = String(process.env.QB_LOG_API || '').toLowerCase() === 'true';
     this.axios = axios.create({
       baseURL: `https://api.quickbase.com/v1`,
       timeout: config.timeout,
@@ -41,7 +43,9 @@ export class QuickBaseClient {
     // Add request/response interceptors for logging and error handling
     this.axios.interceptors.request.use(
       (config) => {
-        console.log(`QB API Request: ${config.method?.toUpperCase()} ${config.url}`);
+        if (this.logApi) {
+          console.log(`QB API Request: ${config.method?.toUpperCase()} ${config.url}`);
+        }
         return config;
       },
       (error) => Promise.reject(error)
@@ -49,11 +53,15 @@ export class QuickBaseClient {
 
     this.axios.interceptors.response.use(
       (response) => {
-        console.log(`QB API Response: ${response.status} ${response.config.url}`);
+        if (this.logApi) {
+          console.log(`QB API Response: ${response.status} ${response.config.url}`);
+        }
         return response;
       },
       (error) => {
-        console.error(`QB API Error: ${error.response?.status} ${error.response?.data?.message || error.message}`);
+        if (this.logApi) {
+          console.error(`QB API Error: ${QuickBaseClient.formatErrorForLog(error)}`);
+        }
         return Promise.reject(error);
       }
     );
