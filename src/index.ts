@@ -327,7 +327,9 @@ class QuickBaseMCPServer {
               content: [
                 {
                   type: 'text',
-                  text: `Record created with ID: ${newRecordId}`,
+                  text: newRecordId === null
+                    ? 'Record created successfully (Record ID not returned by QuickBase API response)'
+                    : `Record created with ID: ${newRecordId}`,
                 },
               ],
             };
@@ -366,7 +368,9 @@ class QuickBaseMCPServer {
               content: [
                 {
                   type: 'text',
-                  text: `Created ${recordIds.length} records: ${recordIds.join(', ')}`,
+                  text: recordIds.length === 0
+                    ? 'Records created successfully (Record IDs not returned by QuickBase API response)'
+                    : `Created ${recordIds.length} records: ${recordIds.join(', ')}`,
                 },
               ],
             };

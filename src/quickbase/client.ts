@@ -7,6 +7,40 @@ export class QuickBaseClient {
   private config: QuickBaseConfig;
   private logApi: boolean;
 
+  private static extractCreatedRecordIds(responseData: any): number[] {
+    const normalizeIds = (ids: unknown[]): number[] =>
+      ids
+        .map((id) => (typeof id === 'number' ? id : Number(id)))
+        .filter((n) => Number.isFinite(n));
+
+    // Common shapes from QuickBase API for create/upsert
+    const metadataIds =
+      responseData?.metadata?.createdRecordIds ??
+      responseData?.metadata?.recordIds ??
+      responseData?.createdRecordIds;
+
+    if (Array.isArray(metadataIds)) {
+      const ids = normalizeIds(metadataIds);
+      if (ids.length > 0) return ids;
+    }
+
+    // Fallback to record field 3 (Record ID) from returned data
+    const rows = responseData?.data;
+    if (Array.isArray(rows)) {
+      const ids = rows
+        .map((row: any) => {
+          const recordIdCell = row?.['3'] ?? row?.[3];
+          const value = recordIdCell?.value;
+          return typeof value === 'number' ? value : Number(value);
+        })
+        .filter((n: any) => Number.isFinite(n));
+
+      if (ids.length > 0) return ids;
+    }
+
+    return [];
+  }
+
   private static formatErrorForLog(error: unknown): string {
     if (axios.isAxiosError(error)) {
       const status = error.response?.status;
@@ -209,14 +243,15 @@ export class QuickBaseClient {
     return response.data.data[0] || null;
   }
 
-  async createRecord(tableId: string, record: QuickBaseRecord): Promise<number> {
+  async createRecord(tableId: string, record: QuickBaseRecord): Promise<number | null> {
     const response = await this.axios.post('/records', {
       to: tableId,
       data: [{
         ...record.fields
       }]
     });
-    return response.data.data[0]['3'].value; // Record ID is always field 3
+    const ids = QuickBaseClient.extractCreatedRecordIds(response.data);
+    return ids.length > 0 ? ids[0] : null;
   }
 
   async createRecords(tableId: string, records: QuickBaseRecord[]): Promise<number[]> {
@@ -224,7 +259,8 @@ export class QuickBaseClient {
       to: tableId,
       data: records.map(record => record.fields)
     });
-    return response.data.data.map((record: any) => record['3'].value);
+    const ids = QuickBaseClient.extractCreatedRecordIds(response.data);
+    return ids;
   }
 
   async updateRecord(tableId: string, recordId: number, updates: Record<string, any>): Promise<void> {

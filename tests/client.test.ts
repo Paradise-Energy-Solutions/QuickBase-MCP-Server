@@ -393,6 +393,35 @@ describe('QuickBaseClient', () => {
         );
         expect(result).toBe(42);
       });
+
+      it('should create a record when IDs are returned in metadata', async () => {
+        mockAxiosInstance.post.mockResolvedValue({
+          data: { metadata: { createdRecordIds: [42] }, data: [] }
+        });
+
+        const record: QuickBaseRecord = {
+          fields: {
+            4: 'John',
+            5: 'john@example.com'
+          }
+        };
+
+        const result = await client.createRecord('bux123', record);
+        expect(result).toBe(42);
+      });
+
+      it('should return null when no Record ID is returned', async () => {
+        mockAxiosInstance.post.mockResolvedValue({
+          data: { data: [], metadata: {} }
+        });
+
+        const record: QuickBaseRecord = {
+          fields: { 4: 'John' }
+        };
+
+        const result = await client.createRecord('bux123', record);
+        expect(result).toBeNull();
+      });
     });
 
     describe('createRecords', () => {
@@ -412,6 +441,34 @@ describe('QuickBaseClient', () => {
         const result = await client.createRecords('bux123', records);
 
         expect(result).toEqual([42, 43]);
+      });
+
+      it('should create multiple records when IDs are returned in metadata', async () => {
+        mockAxiosInstance.post.mockResolvedValue({
+          data: { metadata: { createdRecordIds: [42, 43] }, data: [] }
+        });
+
+        const records: QuickBaseRecord[] = [
+          { fields: { 4: 'John' } },
+          { fields: { 4: 'Jane' } }
+        ];
+
+        const result = await client.createRecords('bux123', records);
+        expect(result).toEqual([42, 43]);
+      });
+
+      it('should return an empty array when no Record IDs are returned', async () => {
+        mockAxiosInstance.post.mockResolvedValue({
+          data: { data: [], metadata: {} }
+        });
+
+        const records: QuickBaseRecord[] = [
+          { fields: { 4: 'John' } },
+          { fields: { 4: 'Jane' } }
+        ];
+
+        const result = await client.createRecords('bux123', records);
+        expect(result).toEqual([]);
       });
     });
 
