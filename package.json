@@ -8,10 +8,15 @@
     "build": "tsc --skipLibCheck",
     "start": "node dist/index.js",
     "dev": "tsc --skipLibCheck --watch & node --watch dist/index.js",
-    "test": "node test-basic-api.js",
+    "test": "npm run test:unit && npm run test:smoke",
+    "test:unit": "jest --coverage",
+    "test:unit:watch": "jest --watch",
+    "test:coverage": "jest --coverage --coverageReporters=text-summary",
+    "test:smoke": "node -e \"import('./dist/tools/index.js').then(m => { if (!m || !Array.isArray(m.quickbaseTools) || m.quickbaseTools.length === 0) { console.error('Smoke test failed: quickbaseTools not found'); process.exit(1); } console.log('Smoke test OK: tools loaded:', m.quickbaseTools.length); }).catch(e => { console.error('Smoke test failed:', e?.message || e); process.exit(1); })\"",
+    "test:integration": "node test-integration-quickbase.js",
     "test:jest": "jest",
     "setup": "node setup.js",
-    "prepublishOnly": "npm run build && npm run test",
+    "prepublishOnly": "npm ci && npm run build && npm run test",
     "clean": "rm -rf dist"
   },
   "files": [
@@ -21,10 +26,10 @@
     "env.example"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.4.0",
-    "axios": "^1.6.0",
+    "@modelcontextprotocol/sdk": "1.25.1",
+    "axios": "^1.8.2",
     "dotenv": "^16.3.0",
-    "zod": "^3.22.0"
+    "zod": "^3.22.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

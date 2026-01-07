@@ -8,9 +8,26 @@ const rl = createInterface({
   output: process.stdout
 });
 
-function question(prompt) {
+rl.stdoutMuted = false;
+rl._writeToOutput = function _writeToOutput(stringToWrite) {
+  if (this.stdoutMuted) {
+    if (stringToWrite.includes('\n') || stringToWrite.includes('\r')) {
+      this.output.write(stringToWrite.replace(/[^\r\n]/g, ''));
+    } else {
+      this.output.write('*');
+    }
+    return;
+  }
+  this.output.write(stringToWrite);
+};
+
+function question(prompt, { mask = false } = {}) {
   return new Promise((resolve) => {
-    rl.question(prompt, resolve);
+    rl.stdoutMuted = mask;
+    rl.question(prompt, (answer) => {
+      rl.stdoutMuted = false;
+      resolve(answer);
+    });
   });
 }
 
@@ -31,9 +48,9 @@ async function setup() {
   try {
     // Get QuickBase configuration
     console.log('📋 QuickBase Configuration:');
-    const realm = await question('   QuickBase Realm (e.g., yourcompany.quickbase.com): ');
-    const userToken = await question('   User Token: ');
-    const appId = await question('   App ID (e.g., btr3r3fk5): ');
+    const realm = (await question('   QuickBase Realm (e.g., yourcompany.quickbase.com): ')).trim();
+    const userToken = await question('   User Token (input hidden): ', { mask: true });
+    const appId = (await question('   App ID (e.g., bxxxxxxxx): ')).trim();
 
     // Optional settings
     console.log('\n⚙️  Optional Settings (press Enter for defaults):');
@@ -44,6 +61,7 @@ async function setup() {
     // Validate required fields
     if (!realm || !userToken || !appId) {
       console.error('❌ Error: Realm, User Token, and App ID are required!');
+      rl.close();
       process.exit(1);
     }
 
@@ -63,8 +81,10 @@ MCP_SERVER_VERSION=1.0.0
 `;
 
     // Write .env file
-    writeFileSync('.env', envContent);
+    writeFileSync('.env', envContent, { mode: 0o600 });
     console.log('\n✅ .env file created successfully!');
+    console.log('⚠️  Security notice: This .env file contains sensitive credentials (your user token).');
+    console.log('    Keep it private. Do NOT commit it to version control. Add ".env" to your .gitignore.');
 
     // Test connection
     console.log('\n🔍 Testing connection...');

@@ -1,12 +1,69 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions } from '../types/quickbase.js';
+import { envFlag } from '../utils/env.js';
 
 export class QuickBaseClient {
   private axios: AxiosInstance;
   private config: QuickBaseConfig;
+  private logApi: boolean;
+
+  private static extractCreatedRecordIds(responseData: any): number[] {
+    const normalizeIds = (ids: unknown[]): number[] =>
+      ids
+        .map((id) => (typeof id === 'number' ? id : Number(id)))
+        .filter((n) => Number.isFinite(n));
+
+    // Common shapes from QuickBase API for create/upsert
+    const metadataIds =
+      responseData?.metadata?.createdRecordIds ??
+      responseData?.metadata?.recordIds ??
+      responseData?.createdRecordIds;
+
+    if (Array.isArray(metadataIds)) {
+      const ids = normalizeIds(metadataIds);
+      if (ids.length > 0) return ids;
+    }
+
+    // Fallback to record field 3 (Record ID) from returned data
+    const rows = responseData?.data;
+    if (Array.isArray(rows)) {
+      const ids = rows
+        .map((row: any) => {
+          const recordIdCell = row?.['3'] ?? row?.[3];
+          const value = recordIdCell?.value;
+          return typeof value === 'number' ? value : Number(value);
+        })
+        .filter((n: any) => Number.isFinite(n));
+
+      if (ids.length > 0) return ids;
+    }
+
+    return [];
+  }
+
+  private static formatErrorForLog(error: unknown): string {
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      const method = error.config?.method?.toUpperCase();
+      const url = error.config?.url;
+      const message = error.message;
+      return `AxiosError${status ? ` ${status}` : ''}${method && url ? ` ${method} ${url}` : ''}: ${message}`;
+    }
+
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    try {
+      return typeof error === 'string' ? error : JSON.stringify(error);
+    } catch {
+      return 'Unknown error';
+    }
+  }
 
   constructor(config: QuickBaseConfig) {
     this.config = config;
+    this.logApi = envFlag('QB_LOG_API', false);
     this.axios = axios.create({
       baseURL: `https://api.quickbase.com/v1`,
       timeout: config.timeout,
@@ -21,7 +78,9 @@ export class QuickBaseClient {
     // Add request/response interceptors for logging and error handling
     this.axios.interceptors.request.use(
       (config) => {
-        console.log(`QB API Request: ${config.method?.toUpperCase()} ${config.url}`);
+        if (this.logApi) {
+          console.log(`QB API Request: ${config.method?.toUpperCase()} ${config.url}`);
+        }
         return config;
       },
       (error) => Promise.reject(error)
@@ -29,11 +88,15 @@ export class QuickBaseClient {
 
     this.axios.interceptors.response.use(
       (response) => {
-        console.log(`QB API Response: ${response.status} ${response.config.url}`);
+        if (this.logApi) {
+          console.log(`QB API Response: ${response.status} ${response.config.url}`);
+        }
         return response;
       },
       (error) => {
-        console.error(`QB API Error: ${error.response?.status} ${error.response?.data?.message || error.message}`);
+        if (this.logApi) {
+          console.error(`QB API Error: ${QuickBaseClient.formatErrorForLog(error)}`);
+        }
         return Promise.reject(error);
       }
     );
@@ -180,14 +243,15 @@ export class QuickBaseClient {
     return response.data.data[0] || null;
   }
 
-  async createRecord(tableId: string, record: QuickBaseRecord): Promise<number> {
+  async createRecord(tableId: string, record: QuickBaseRecord): Promise<number | null> {
     const response = await this.axios.post('/records', {
       to: tableId,
       data: [{
         ...record.fields
       }]
     });
-    return response.data.data[0]['3'].value; // Record ID is always field 3
+    const ids = QuickBaseClient.extractCreatedRecordIds(response.data);
+    return ids.length > 0 ? ids[0] : null;
   }
 
   async createRecords(tableId: string, records: QuickBaseRecord[]): Promise<number[]> {
@@ -195,7 +259,8 @@ export class QuickBaseClient {
       to: tableId,
       data: records.map(record => record.fields)
     });
-    return response.data.data.map((record: any) => record['3'].value);
+    const ids = QuickBaseClient.extractCreatedRecordIds(response.data);
+    return ids;
   }
 
   async updateRecord(tableId: string, recordId: number, updates: Record<string, any>): Promise<void> {
@@ -240,17 +305,14 @@ export class QuickBaseClient {
   // ========== RELATIONSHIP METHODS ==========
 
   async createRelationship(parentTableId: string, childTableId: string, foreignKeyFieldId: number): Promise<void> {
-    await this.axios.post('/relationships', {
+    await this.axios.post(`/tables/${childTableId}/relationship`, {
       parentTableId,
-      childTableId,
       foreignKeyFieldId
     });
   }
 
   async getRelationships(tableId: string): Promise<any[]> {
-    const response = await this.axios.get(`/relationships`, {
-      params: { childTableId: tableId }
-    });
+    const response = await this.axios.get(`/tables/${tableId}/relationship`);
     return response.data;
   }
 
@@ -295,7 +357,7 @@ export class QuickBaseClient {
 
       return { referenceFieldId, lookupFieldIds };
     } catch (error) {
-      console.error('Error creating advanced relationship:', error);
+      console.error(`Error creating advanced relationship: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -419,7 +481,7 @@ export class QuickBaseClient {
 
       return result;
     } catch (error) {
-      console.error('Error getting relationship details:', error);
+      console.error(`Error getting relationship details: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -483,7 +545,7 @@ export class QuickBaseClient {
         table2ReferenceFieldId
       };
     } catch (error) {
-      console.error('Error creating junction table:', error);
+      console.error(`Error creating junction table: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -520,9 +582,14 @@ export class QuickBaseClient {
 
   async searchRecords(tableId: string, searchTerm: string, fieldIds?: number[]): Promise<any[]> {
     // This is a simple implementation - you might want to enhance based on your search needs
+    const sanitizedSearchTerm = String(searchTerm)
+      .slice(0, 200)
+      .replace(/[\r\n]/g, ' ')
+      .replace(/'/g, "\\'");
+
     const whereClause = fieldIds 
-      ? fieldIds.map(fieldId => `{${fieldId}.CT.'${searchTerm}'}`).join('OR')
-      : `{6.CT.'${searchTerm}'}OR{7.CT.'${searchTerm}'}`; // Common text fields
+      ? fieldIds.map(fieldId => `{${fieldId}.CT.'${sanitizedSearchTerm}'}`).join('OR')
+      : `{6.CT.'${sanitizedSearchTerm}'}OR{7.CT.'${sanitizedSearchTerm}'}`; // Common text fields
 
     return this.getRecords(tableId, { where: whereClause });
   }

@@ -6,10 +6,13 @@ Thank you for your interest in contributing to the QuickBase MCP Server! This do
 
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/your-username/quickbase-mcp-server.git`
-3. Install dependencies: `npm install`
+3. Install dependencies: `npm install` (for CI/release builds, prefer `npm ci` for reproducible installs)
 4. Set up your environment by copying `env.example` to `.env` and filling in your QuickBase credentials
 5. Build the project: `npm run build`
-6. Run tests: `npm test`
+6. Run tests: `npm test` (non-network smoke test)
+
+To run the QuickBase integration test (requires `QB_REALM`, `QB_USER_TOKEN`, `QB_APP_ID`):
+`npm run test:integration`
 
 ## Development Workflow
 

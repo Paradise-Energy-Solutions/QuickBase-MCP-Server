@@ -49,6 +49,8 @@ cd quickbase-mcp-server
 npm install
 ```
 
+> For CI/release builds, prefer `npm ci` (requires `package-lock.json`) for reproducible installs.
+
 2. **Copy environment configuration:**
 ```bash
 cp env.example .env
@@ -164,7 +166,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 {
   "name": "quickbase_create_field",
   "arguments": {
-    "tableId": "bu65pc8px",
+    "tableId": "your_table_id_here",
     "label": "Project Status",
     "fieldType": "text_choice",
     "choices": ["Planning", "Active", "Complete", "On Hold"],
@@ -178,7 +180,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 {
   "name": "quickbase_query_records",
   "arguments": {
-    "tableId": "bu65pc8px",
+    "tableId": "your_table_id_here",
     "where": "{6.EX.'John'}",
     "top": 10,
     "sortBy": [{"fieldId": 3, "order": "DESC"}]
@@ -191,7 +193,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 {
   "name": "quickbase_create_record",
   "arguments": {
-    "tableId": "bu65pc8px",
+    "tableId": "your_table_id_here",
     "fields": {
       "6": {"value": "John Doe"},
       "7": {"value": "123 Main St"},
@@ -230,8 +232,38 @@ npm run dev
 ```
 
 ### Run tests:
+
+#### Unit Tests (with Coverage)
+```bash
+npm run test:unit
+```
+
+Runs 154 comprehensive unit tests with **78.62% code coverage**, exceeding the 70% target. Tests cover:
+- All Zod schema validation (100% coverage)
+- Tool definitions and schemas (100% coverage)
+- Client methods and utilities (89.79% coverage)
+- Error handling and edge cases
+
+For more information, see [TESTING.md](TESTING.md).
+
+#### Watch Mode (Development)
+```bash
+npm run test:unit:watch
+```
+
+Run tests in watch mode for continuous feedback during development.
+
+#### Smoke Test
 ```bash
 npm test
+```
+
+Quick smoke test that verifies tools are loaded correctly (runs before publishing).
+
+#### Integration Test
+To run the QuickBase integration test (requires `QB_REALM`, `QB_USER_TOKEN`, `QB_APP_ID`):
+```bash
+npm run test:integration
 ```
 
 ## Troubleshooting
@@ -256,6 +288,16 @@ npm test
 Set environment variable:
 ```bash
 DEBUG=quickbase-mcp:*
+```
+
+To enable QuickBase API request/response logs (off by default):
+```bash
+QB_LOG_API=true
+```
+
+To force read-only mode (blocks create/update/delete even if confirm flags are provided):
+```bash
+QB_READONLY=true
 ```
 
 ## Implementation Notes

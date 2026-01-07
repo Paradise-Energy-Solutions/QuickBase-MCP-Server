@@ -1,24 +1,99 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+function validateFieldPayload(payload: unknown, ctx: z.RefinementCtx) {
+  const maxDepth = 4;
+  const maxKeysPerObject = 250;
+  const maxTotalKeys = 2000;
+  const maxStringLength = 10000;
+  const maxArrayLength = 1000;
+
+  let totalKeys = 0;
+
+  const visit = (value: unknown, depth: number) => {
+    if (depth > maxDepth) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Payload nesting too deep (max depth ${maxDepth}).` });
+      return;
+    }
+
+    if (value === null || value === undefined) {
+      return;
+    }
+
+    if (typeof value === 'string') {
+      if (value.length > maxStringLength) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `String value too long (max ${maxStringLength} chars).` });
+      }
+      return;
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length > maxArrayLength) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Array too large (max ${maxArrayLength} items).` });
+        return;
+      }
+      for (const item of value) {
+        visit(item, depth + 1);
+      }
+      return;
+    }
+
+    if (typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      const keys = Object.keys(obj);
+
+      if (keys.length > maxKeysPerObject) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Object has too many keys (max ${maxKeysPerObject}).` });
+        return;
+      }
+
+      totalKeys += keys.length;
+
+      if (totalKeys > maxTotalKeys) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Payload has too many keys overall (max ${maxTotalKeys}).` });
+        return;
+      }
+
+      for (const k of keys) {
+        if (k.length > 64) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Object key too long (max 64 chars).' });
+          return;
+        }
+        visit(obj[k], depth + 1);
+      }
+      return;
+    }
+
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unsupported value type in payload: ${typeof value}` });
+  };
+
+  visit(payload, 0);
+}
+
 // Tool parameter schemas
 const TableIdSchema = z.object({
-  tableId: z.string().describe('QuickBase table ID (e.g., "bu65pc8px")')
+  tableId: z.string().min(3).max(64).describe('QuickBase table ID (e.g., "buXXXXXXX")')
 });
 
 const RecordIdSchema = z.object({
-  tableId: z.string().describe('QuickBase table ID'),
+  tableId: z.string().min(3).max(64).describe('QuickBase table ID'),
   recordId: z.number().describe('Record ID number')
 });
 
 const CreateTableSchema = z.object({
-  name: z.string().describe('Table name'),
-  description: z.string().optional().describe('Table description')
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
+  name: z.string().min(1).max(128).describe('Table name'),
+  description: z.string().max(1024).optional().describe('Table description')
 });
 
 const CreateFieldSchema = z.object({
-  tableId: z.string().describe('Table ID to add field to'),
-  label: z.string().describe('Field label/name'),
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
+  tableId: z.string().min(3).max(64).describe('Table ID to add field to'),
+  label: z.string().min(1).max(128).describe('Field label/name'),
   fieldType: z.enum([
     'text', 'text_choice', 'text_multiline', 'richtext', 'numeric', 
     'currency', 'percent', 'date', 'datetime', 'checkbox', 'email', 
@@ -26,55 +101,64 @@ const CreateFieldSchema = z.object({
   ]).describe('Type of field'),
   required: z.boolean().default(false).describe('Whether field is required'),
   unique: z.boolean().default(false).describe('Whether field must be unique'),
-  choices: z.array(z.string()).optional().describe('Choices for choice fields'),
-  formula: z.string().optional().describe('Formula for formula fields'),
-  lookupTableId: z.string().optional().describe('Table ID for lookup fields'),
+  choices: z.array(z.string().max(256)).max(500).optional().describe('Choices for choice fields'),
+  formula: z.string().max(10000).optional().describe('Formula for formula fields'),
+  lookupTableId: z.string().min(3).max(64).optional().describe('Table ID for lookup fields'),
   lookupFieldId: z.number().optional().describe('Field ID for lookup fields')
 });
 
 const QueryRecordsSchema = z.object({
-  tableId: z.string().describe('Table ID to query'),
+  tableId: z.string().min(3).max(64).describe('Table ID to query'),
   select: z.array(z.number()).optional().describe('Field IDs to select'),
-  where: z.string().optional().describe('QuickBase query filter'),
+  where: z.string().max(5000).optional().describe('QuickBase query filter'),
   sortBy: z.array(z.object({
     fieldId: z.number(),
     order: z.enum(['ASC', 'DESC']).default('ASC')
   })).optional().describe('Sort criteria'),
-  top: z.number().optional().describe('Max number of records'),
-  skip: z.number().optional().describe('Number of records to skip')
+  top: z.number().int().min(1).max(1000).optional().describe('Max number of records'),
+  skip: z.number().int().min(0).max(100000).optional().describe('Number of records to skip')
 });
 
 const CreateRecordSchema = z.object({
-  tableId: z.string().describe('Table ID to create record in'),
-  fields: z.record(z.any()).describe('Field values as fieldId: value pairs')
+  confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
+  tableId: z.string().min(3).max(64).describe('Table ID to create record in'),
+  fields: z.record(z.any())
+    .superRefine((v, ctx) => validateFieldPayload(v, ctx))
+    .describe('Field values as fieldId: value pairs')
 });
 
 const UpdateRecordSchema = z.object({
-  tableId: z.string().describe('Table ID'),
+  confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
+  tableId: z.string().min(3).max(64).describe('Table ID'),
   recordId: z.number().describe('Record ID to update'),
-  fields: z.record(z.any()).describe('Field values to update as fieldId: value pairs')
+  fields: z.record(z.any())
+    .superRefine((v, ctx) => validateFieldPayload(v, ctx))
+    .describe('Field values to update as fieldId: value pairs')
 });
 
 const BulkCreateSchema = z.object({
-  tableId: z.string().describe('Table ID'),
+  confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
+  tableId: z.string().min(3).max(64).describe('Table ID'),
   records: z.array(z.object({
-    fields: z.record(z.any())
-  })).describe('Array of records to create')
+    fields: z.record(z.any()).superRefine((v, ctx) => validateFieldPayload(v, ctx))
+  })).max(250).describe('Array of records to create')
 });
 
 const SearchRecordsSchema = z.object({
-  tableId: z.string().describe('Table ID to search'),
-  searchTerm: z.string().describe('Text to search for'),
+  tableId: z.string().min(3).max(64).describe('Table ID to search'),
+  searchTerm: z.string().min(1).max(200).describe('Text to search for'),
   fieldIds: z.array(z.number()).optional().describe('Field IDs to search in')
 });
 
 const CreateRelationshipSchema = z.object({
-  parentTableId: z.string().describe('Parent table ID'),
-  childTableId: z.string().describe('Child table ID'),
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
+  parentTableId: z.string().min(3).max(64).describe('Parent table ID'),
+  childTableId: z.string().min(3).max(64).describe('Child table ID'),
   foreignKeyFieldId: z.number().describe('Foreign key field ID in child table')
 });
 
 const CreateAdvancedRelationshipSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   parentTableId: z.string().describe('Parent table ID'),
   childTableId: z.string().describe('Child table ID'),
   referenceFieldLabel: z.string().describe('Label for the reference field to create'),
@@ -86,6 +170,7 @@ const CreateAdvancedRelationshipSchema = z.object({
 });
 
 const CreateLookupFieldSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   childTableId: z.string().describe('Child table ID where lookup field will be created'),
   parentTableId: z.string().describe('Parent table ID to lookup from'),
   referenceFieldId: z.number().describe('Reference field ID in child table'),
@@ -97,6 +182,24 @@ const ValidateRelationshipSchema = z.object({
   parentTableId: z.string().describe('Parent table ID'),
   childTableId: z.string().describe('Child table ID'),
   foreignKeyFieldId: z.number().describe('Foreign key field ID to validate')
+});
+
+const CreateJunctionTableSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
+  junctionTableName: z.string().describe('Name for the junction table'),
+  table1Id: z.string().describe('First table ID'),
+  table2Id: z.string().describe('Second table ID'),
+  table1FieldLabel: z.string().describe('Label for reference to first table'),
+  table2FieldLabel: z.string().describe('Label for reference to second table'),
+  additionalFields: z.array(z.object({
+    label: z.string(),
+    fieldType: z.string()
+  })).optional().describe('Additional fields for the junction table')
+});
+
+const GetRelationshipDetailsSchema = z.object({
+  tableId: z.string().describe('Table ID to analyze relationships for'),
+  includeFields: z.boolean().default(true).describe('Include related field details')
 });
 
 // Define all MCP tools
@@ -139,10 +242,11 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         name: { type: 'string', description: 'Table name' },
         description: { type: 'string', description: 'Table description' }
       },
-      required: ['name']
+      required: ['confirm', 'name']
     }
   },
 
@@ -189,6 +293,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID to add field to' },
         label: { type: 'string', description: 'Field label/name' },
         fieldType: { 
@@ -203,7 +308,7 @@ export const quickbaseTools: Tool[] = [
         lookupTableId: { type: 'string', description: 'Table ID for lookup fields' },
         lookupFieldId: { type: 'number', description: 'Field ID for lookup fields' }
       },
-      required: ['tableId', 'label', 'fieldType']
+      required: ['confirm', 'tableId', 'label', 'fieldType']
     }
   },
 
@@ -213,13 +318,14 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID' },
         fieldId: { type: 'number', description: 'Field ID to update' },
         label: { type: 'string', description: 'New field label' },
         required: { type: 'boolean', description: 'Whether field is required' },
         choices: { type: 'array', items: { type: 'string' }, description: 'New choices for choice fields' }
       },
-      required: ['tableId', 'fieldId']
+      required: ['confirm', 'tableId', 'fieldId']
     }
   },
 
@@ -284,6 +390,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for data-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID to create record in' },
         fields: { 
           type: 'object', 
@@ -291,7 +398,7 @@ export const quickbaseTools: Tool[] = [
           additionalProperties: true
         }
       },
-      required: ['tableId', 'fields']
+      required: ['confirm', 'tableId', 'fields']
     }
   },
 
@@ -301,6 +408,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for data-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID' },
         recordId: { type: 'number', description: 'Record ID to update' },
         fields: { 
@@ -309,7 +417,7 @@ export const quickbaseTools: Tool[] = [
           additionalProperties: true
         }
       },
-      required: ['tableId', 'recordId', 'fields']
+      required: ['confirm', 'tableId', 'recordId', 'fields']
     }
   },
 
@@ -332,6 +440,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for data-modifying operations (must be true)' },
         tableId: { type: 'string', description: 'Table ID' },
         records: {
           type: 'array',
@@ -344,7 +453,7 @@ export const quickbaseTools: Tool[] = [
           description: 'Array of records to create'
         }
       },
-      required: ['tableId', 'records']
+      required: ['confirm', 'tableId', 'records']
     }
   },
 
@@ -369,11 +478,12 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         parentTableId: { type: 'string', description: 'Parent table ID' },
         childTableId: { type: 'string', description: 'Child table ID' },
         foreignKeyFieldId: { type: 'number', description: 'Foreign key field ID in child table' }
       },
-      required: ['parentTableId', 'childTableId', 'foreignKeyFieldId']
+      required: ['confirm', 'parentTableId', 'childTableId', 'foreignKeyFieldId']
     }
   },
 
@@ -422,6 +532,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         parentTableId: { type: 'string', description: 'Parent table ID' },
         childTableId: { type: 'string', description: 'Child table ID' },
         referenceFieldLabel: { type: 'string', description: 'Label for the reference field to create' },
@@ -444,7 +555,7 @@ export const quickbaseTools: Tool[] = [
           description: 'Type of relationship' 
         }
       },
-      required: ['parentTableId', 'childTableId', 'referenceFieldLabel']
+      required: ['confirm', 'parentTableId', 'childTableId', 'referenceFieldLabel']
     }
   },
 
@@ -454,13 +565,14 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         childTableId: { type: 'string', description: 'Child table ID where lookup field will be created' },
         parentTableId: { type: 'string', description: 'Parent table ID to lookup from' },
         referenceFieldId: { type: 'number', description: 'Reference field ID in child table' },
         parentFieldId: { type: 'number', description: 'Field ID in parent table to lookup' },
         lookupFieldLabel: { type: 'string', description: 'Label for the new lookup field' }
       },
-      required: ['childTableId', 'parentTableId', 'referenceFieldId', 'parentFieldId', 'lookupFieldLabel']
+      required: ['confirm', 'childTableId', 'parentTableId', 'referenceFieldId', 'parentFieldId', 'lookupFieldLabel']
     }
   },
 
@@ -497,6 +609,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         junctionTableName: { type: 'string', description: 'Name for the junction table' },
         table1Id: { type: 'string', description: 'First table ID' },
         table2Id: { type: 'string', description: 'Second table ID' },
@@ -514,7 +627,7 @@ export const quickbaseTools: Tool[] = [
           description: 'Additional fields for the junction table'
         }
       },
-      required: ['junctionTableName', 'table1Id', 'table2Id', 'table1FieldLabel', 'table2FieldLabel']
+      required: ['confirm', 'junctionTableName', 'table1Id', 'table2Id', 'table1FieldLabel', 'table2FieldLabel']
     }
   },
 ];
@@ -533,5 +646,7 @@ export {
   CreateRelationshipSchema,
   CreateAdvancedRelationshipSchema,
   CreateLookupFieldSchema,
-  ValidateRelationshipSchema
+  ValidateRelationshipSchema,
+  CreateJunctionTableSchema,
+  GetRelationshipDetailsSchema
 }; 

@@ -8,14 +8,14 @@ Your QuickBase MCP server has been successfully set up and tested:
 - ✅ **Authentication**: User token working correctly
 - ✅ **Table Access**: Can read table schema and fields
 - ✅ **Record Operations**: Can query and retrieve records
-- ✅ **App ID**: Correct app ID configured (`btr3r3fk5`)
+- ✅ **App ID**: Correct app ID configured (`your_app_id_here`)
 
 ## 📊 Test Results
 
 **Connected to:**
-- **Realm**: seanngates.quickbase.com
-- **App**: btr3r3fk5 
-- **Test Table**: Leads (bu65pc8px)
+- **Realm**: yourrealm.quickbase.com
+- **App**: your_app_id_here
+- **Test Table**: Your Table (your_table_id_here)
 - **Fields Found**: 49 fields
 - **Records Accessible**: ✅ Successfully queried records
 
@@ -36,7 +36,7 @@ Add this to your Claude Desktop `config.json`:
   "mcpServers": {
     "quickbase": {
       "command": "node",
-      "args": ["C:/Users/ljcir/Downloads/USWorkflow/USWorkflow/quickbase-mcp-server/dist/index.js"],
+      "args": ["/path/to/quickbase-mcp-server/dist/index.js"],
       "env": {}
     }
   }

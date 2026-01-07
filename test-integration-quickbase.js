@@ -1,16 +1,27 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
+import { existsSync } from 'fs';
 
 dotenv.config();
 
 async function testDirectAPI() {
   console.log('🔍 Testing Direct QuickBase API Access...\n');
 
+  if (!existsSync('.env')) {
+    throw new Error('Missing .env file. Create one by copying env.example to .env, then set QB_REALM, QB_USER_TOKEN, QB_APP_ID, and QB_TEST_TABLE_ID.');
+  }
+
+  const requiredEnvVars = ['QB_REALM', 'QB_USER_TOKEN', 'QB_APP_ID', 'QB_TEST_TABLE_ID'];
+  const missingEnvVars = requiredEnvVars.filter((name) => !process.env[name] || String(process.env[name]).trim() === '');
+  if (missingEnvVars.length > 0) {
+    throw new Error(`Missing required environment variables: ${missingEnvVars.join(', ')}. Update .env (see env.example) and re-run.`);
+  }
+
   const config = {
     realm: process.env.QB_REALM,
     userToken: process.env.QB_USER_TOKEN,
     appId: process.env.QB_APP_ID,
-    leadsTableId: 'bu65pc8px' // From your mapping file
+    leadsTableId: process.env.QB_TEST_TABLE_ID
   };
 
   console.log('Configuration:');
