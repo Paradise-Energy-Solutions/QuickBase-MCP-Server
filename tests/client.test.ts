@@ -558,10 +558,9 @@ describe('QuickBaseClient', () => {
         await client.createRelationship('bux123', 'bux124', 15);
 
         expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-          '/relationships',
+          '/tables/bux124/relationship',
           {
             parentTableId: 'bux123',
-            childTableId: 'bux124',
             foreignKeyFieldId: 15
           }
         );
@@ -578,8 +577,7 @@ describe('QuickBaseClient', () => {
         const result = await client.getRelationships('bux124');
 
         expect(mockAxiosInstance.get).toHaveBeenCalledWith(
-          '/relationships',
-          { params: { childTableId: 'bux124' } }
+          '/tables/bux124/relationship'
         );
         expect(result).toEqual(mockRelationships);
       });

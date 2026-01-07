@@ -52,4 +52,15 @@ describe('Tool guards - readonly / destructive / confirmation', () => {
       })
     ).not.toThrow();
   });
+
+  it('blocks destructive tools when QB_ALLOW_DESTRUCTIVE is false', () => {
+    expect(() =>
+      assertToolAllowed({
+        name: 'quickbase_delete_record',
+        args: { tableId: 'bux123', recordId: 1 },
+        readOnly: false,
+        allowDestructive: false
+      })
+    ).toThrow(/destructive tool/i);
+  });
 });
