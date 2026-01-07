@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import {
   TableIdSchema,
   RecordIdSchema,
@@ -72,6 +71,7 @@ describe('Tool Schemas - Validation', () => {
     });
 
     it('should require confirm: true', () => {
+      // Expect validation error about invalid literal value or required field
       expect(() => CreateTableSchema.parse({ confirm: false, name: 'Test' })).toThrow();
       expect(() => CreateTableSchema.parse({ name: 'Test' })).toThrow();
     });
@@ -391,6 +391,7 @@ describe('Tool Schemas - Validation', () => {
   describe('CreateAdvancedRelationshipSchema', () => {
     it('should validate advanced relationship', () => {
       const data = {
+        confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
         referenceFieldLabel: 'Parent Reference'
@@ -400,6 +401,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate with lookup fields', () => {
       const data = {
+        confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
         referenceFieldLabel: 'Parent Reference',
@@ -412,12 +414,14 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate relationship type', () => {
       const oneToMany = {
+        confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
         referenceFieldLabel: 'Parent',
         relationshipType: 'one-to-many' as const
       };
       const manyToMany = {
+        confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
         referenceFieldLabel: 'Parent',
@@ -431,6 +435,7 @@ describe('Tool Schemas - Validation', () => {
   describe('CreateLookupFieldSchema', () => {
     it('should validate lookup field creation', () => {
       const data = {
+        confirm: true,
         childTableId: 'bux124',
         parentTableId: 'bux123',
         referenceFieldId: 10,
@@ -442,6 +447,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should require all fields', () => {
       expect(() => CreateLookupFieldSchema.parse({
+        confirm: true,
         childTableId: 'bux124',
         parentTableId: 'bux123',
         referenceFieldId: 10

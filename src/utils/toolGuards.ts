@@ -17,7 +17,9 @@ export const readOnlyAllowedTools = new Set([
   'quickbase_search_records',
   'quickbase_get_relationships',
   'quickbase_get_reports',
-  'quickbase_run_report'
+  'quickbase_run_report',
+  'quickbase_validate_relationship',
+  'quickbase_get_relationship_details'
 ]);
 
 export const confirmationRequiredTools = new Set([
@@ -27,7 +29,10 @@ export const confirmationRequiredTools = new Set([
   'quickbase_create_record',
   'quickbase_update_record',
   'quickbase_bulk_create_records',
-  'quickbase_create_relationship'
+  'quickbase_create_relationship',
+  'quickbase_create_advanced_relationship',
+  'quickbase_create_lookup_field',
+  'quickbase_create_junction_table'
 ]);
 
 export function assertToolAllowed(params: {

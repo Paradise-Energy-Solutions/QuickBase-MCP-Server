@@ -45,12 +45,13 @@ function validateFieldPayload(payload: unknown, ctx: z.RefinementCtx) {
     if (typeof value === 'object') {
       const obj = value as Record<string, unknown>;
       const keys = Object.keys(obj);
-      totalKeys += keys.length;
 
       if (keys.length > maxKeysPerObject) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Object has too many keys (max ${maxKeysPerObject}).` });
         return;
       }
+
+      totalKeys += keys.length;
 
       if (totalKeys > maxTotalKeys) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Payload has too many keys overall (max ${maxTotalKeys}).` });
@@ -157,6 +158,7 @@ const CreateRelationshipSchema = z.object({
 });
 
 const CreateAdvancedRelationshipSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   parentTableId: z.string().describe('Parent table ID'),
   childTableId: z.string().describe('Child table ID'),
   referenceFieldLabel: z.string().describe('Label for the reference field to create'),
@@ -168,6 +170,7 @@ const CreateAdvancedRelationshipSchema = z.object({
 });
 
 const CreateLookupFieldSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   childTableId: z.string().describe('Child table ID where lookup field will be created'),
   parentTableId: z.string().describe('Parent table ID to lookup from'),
   referenceFieldId: z.number().describe('Reference field ID in child table'),
@@ -179,6 +182,24 @@ const ValidateRelationshipSchema = z.object({
   parentTableId: z.string().describe('Parent table ID'),
   childTableId: z.string().describe('Child table ID'),
   foreignKeyFieldId: z.number().describe('Foreign key field ID to validate')
+});
+
+const CreateJunctionTableSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
+  junctionTableName: z.string().describe('Name for the junction table'),
+  table1Id: z.string().describe('First table ID'),
+  table2Id: z.string().describe('Second table ID'),
+  table1FieldLabel: z.string().describe('Label for reference to first table'),
+  table2FieldLabel: z.string().describe('Label for reference to second table'),
+  additionalFields: z.array(z.object({
+    label: z.string(),
+    fieldType: z.string()
+  })).optional().describe('Additional fields for the junction table')
+});
+
+const GetRelationshipDetailsSchema = z.object({
+  tableId: z.string().describe('Table ID to analyze relationships for'),
+  includeFields: z.boolean().default(true).describe('Include related field details')
 });
 
 // Define all MCP tools
@@ -511,6 +532,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         parentTableId: { type: 'string', description: 'Parent table ID' },
         childTableId: { type: 'string', description: 'Child table ID' },
         referenceFieldLabel: { type: 'string', description: 'Label for the reference field to create' },
@@ -533,7 +555,7 @@ export const quickbaseTools: Tool[] = [
           description: 'Type of relationship' 
         }
       },
-      required: ['parentTableId', 'childTableId', 'referenceFieldLabel']
+      required: ['confirm', 'parentTableId', 'childTableId', 'referenceFieldLabel']
     }
   },
 
@@ -543,13 +565,14 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         childTableId: { type: 'string', description: 'Child table ID where lookup field will be created' },
         parentTableId: { type: 'string', description: 'Parent table ID to lookup from' },
         referenceFieldId: { type: 'number', description: 'Reference field ID in child table' },
         parentFieldId: { type: 'number', description: 'Field ID in parent table to lookup' },
         lookupFieldLabel: { type: 'string', description: 'Label for the new lookup field' }
       },
-      required: ['childTableId', 'parentTableId', 'referenceFieldId', 'parentFieldId', 'lookupFieldLabel']
+      required: ['confirm', 'childTableId', 'parentTableId', 'referenceFieldId', 'parentFieldId', 'lookupFieldLabel']
     }
   },
 
@@ -586,6 +609,7 @@ export const quickbaseTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
         junctionTableName: { type: 'string', description: 'Name for the junction table' },
         table1Id: { type: 'string', description: 'First table ID' },
         table2Id: { type: 'string', description: 'Second table ID' },
@@ -603,7 +627,7 @@ export const quickbaseTools: Tool[] = [
           description: 'Additional fields for the junction table'
         }
       },
-      required: ['junctionTableName', 'table1Id', 'table2Id', 'table1FieldLabel', 'table2FieldLabel']
+      required: ['confirm', 'junctionTableName', 'table1Id', 'table2Id', 'table1FieldLabel', 'table2FieldLabel']
     }
   },
 ];
@@ -622,5 +646,7 @@ export {
   CreateRelationshipSchema,
   CreateAdvancedRelationshipSchema,
   CreateLookupFieldSchema,
-  ValidateRelationshipSchema
+  ValidateRelationshipSchema,
+  CreateJunctionTableSchema,
+  GetRelationshipDetailsSchema
 }; 

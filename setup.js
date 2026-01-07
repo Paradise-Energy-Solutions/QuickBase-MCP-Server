@@ -83,6 +83,8 @@ MCP_SERVER_VERSION=1.0.0
     // Write .env file
     writeFileSync('.env', envContent, { mode: 0o600 });
     console.log('\n✅ .env file created successfully!');
+    console.log('⚠️  Security notice: This .env file contains sensitive credentials (your user token).');
+    console.log('    Keep it private. Do NOT commit it to version control. Add ".env" to your .gitignore.');
 
     // Test connection
     console.log('\n🔍 Testing connection...');

@@ -305,17 +305,14 @@ export class QuickBaseClient {
   // ========== RELATIONSHIP METHODS ==========
 
   async createRelationship(parentTableId: string, childTableId: string, foreignKeyFieldId: number): Promise<void> {
-    await this.axios.post('/relationships', {
+    await this.axios.post(`/tables/${childTableId}/relationship`, {
       parentTableId,
-      childTableId,
       foreignKeyFieldId
     });
   }
 
   async getRelationships(tableId: string): Promise<any[]> {
-    const response = await this.axios.get(`/relationships`, {
-      params: { childTableId: tableId }
-    });
+    const response = await this.axios.get(`/tables/${tableId}/relationship`);
     return response.data;
   }
 

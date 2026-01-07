@@ -21,7 +21,12 @@ import {
   UpdateRecordSchema,
   BulkCreateSchema,
   SearchRecordsSchema,
-  CreateRelationshipSchema
+  CreateRelationshipSchema,
+  CreateAdvancedRelationshipSchema,
+  CreateLookupFieldSchema,
+  ValidateRelationshipSchema,
+  CreateJunctionTableSchema,
+  GetRelationshipDetailsSchema
 } from './tools/index.js';
 import { QuickBaseConfig } from './types/quickbase.js';
 import { envFlag, loadDotenv } from './utils/env.js';
@@ -444,6 +449,68 @@ class QuickBaseMCPServer {
                   ),
                 },
               ],
+            };
+
+          // ========== ENHANCED RELATIONSHIP TOOLS ==========
+          case 'quickbase_create_advanced_relationship':
+            const advRelArgs = parseArgs('quickbase_create_advanced_relationship', CreateAdvancedRelationshipSchema, args);
+            const advResult = await this.qbClient.createAdvancedRelationship(
+              advRelArgs.parentTableId,
+              advRelArgs.childTableId,
+              advRelArgs.referenceFieldLabel,
+              advRelArgs.lookupFields,
+              advRelArgs.relationshipType as any
+            );
+            return {
+              content: [{ type: 'text', text: JSON.stringify(advResult, null, 2) }]
+            };
+
+          case 'quickbase_create_lookup_field':
+            const lookupArgs = parseArgs('quickbase_create_lookup_field', CreateLookupFieldSchema, args);
+            const lookupFieldId = await this.qbClient.createLookupField(
+              lookupArgs.childTableId,
+              lookupArgs.parentTableId,
+              lookupArgs.referenceFieldId,
+              lookupArgs.parentFieldId,
+              lookupArgs.lookupFieldLabel
+            );
+            return {
+              content: [{ type: 'text', text: `Lookup field created with ID: ${lookupFieldId}` }]
+            };
+
+          case 'quickbase_validate_relationship':
+            const validateArgs = parseArgs('quickbase_validate_relationship', ValidateRelationshipSchema, args);
+            const validationResult = await this.qbClient.validateRelationship(
+              validateArgs.parentTableId,
+              validateArgs.childTableId,
+              validateArgs.foreignKeyFieldId
+            );
+            return {
+              content: [{ type: 'text', text: JSON.stringify(validationResult, null, 2) }]
+            };
+
+          case 'quickbase_get_relationship_details':
+            const detailsArgs = parseArgs('quickbase_get_relationship_details', GetRelationshipDetailsSchema, args);
+            const detailsResult = await this.qbClient.getRelationshipDetails(
+              detailsArgs.tableId,
+              detailsArgs.includeFields
+            );
+            return {
+              content: [{ type: 'text', text: JSON.stringify(detailsResult, null, 2) }]
+            };
+
+          case 'quickbase_create_junction_table':
+            const junctionArgs = parseArgs('quickbase_create_junction_table', CreateJunctionTableSchema, args);
+            const junctionResult = await this.qbClient.createJunctionTable(
+              junctionArgs.junctionTableName,
+              junctionArgs.table1Id,
+              junctionArgs.table2Id,
+              junctionArgs.table1FieldLabel,
+              junctionArgs.table2FieldLabel,
+              junctionArgs.additionalFields
+            );
+            return {
+              content: [{ type: 'text', text: JSON.stringify(junctionResult, null, 2) }]
             };
 
           default:
