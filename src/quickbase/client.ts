@@ -607,4 +607,215 @@ export class QuickBaseClient {
       mergeFieldId: records[0]?.keyField
     });
   }
+
+  // ========== WEBHOOK METHODS ==========
+
+  async createWebhook(tableId: string, webhook: {
+    label: string;
+    description?: string;
+    webhookUrl: string;
+    webhookEvents: string; // 'a' (add), 'd' (delete), 'm' (modify) - can be combined like 'amd'
+    messageFormat?: 'XML' | 'JSON' | 'RAW';
+    messageBody?: string;
+    webhookHeaders?: Record<string, string>;
+    httpMethod?: 'POST' | 'GET' | 'PUT' | 'PATCH' | 'DELETE';
+    triggerFields?: number[]; // Only trigger on changes to specific fields
+  }): Promise<string> {
+    try {
+      // Build XML request for API_Webhooks_Create
+      let xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<qdbapi>
+  <label>${this.escapeXml(webhook.label)}</label>`;
+
+      if (webhook.description) {
+        xmlBody += `\n  <description>${this.escapeXml(webhook.description)}</description>`;
+      }
+
+      xmlBody += `\n  <webhookUrl>${this.escapeXml(webhook.webhookUrl)}</webhookUrl>`;
+      xmlBody += `\n  <webhookEvent>${this.escapeXml(webhook.webhookEvents)}</webhookEvent>`;
+
+      if (webhook.messageFormat) {
+        xmlBody += `\n  <webhookMessageFormat>${this.escapeXml(webhook.messageFormat)}</webhookMessageFormat>`;
+      }
+
+      if (webhook.messageBody) {
+        xmlBody += `\n  <webhookMessage>${this.escapeXml(webhook.messageBody)}</webhookMessage>`;
+      }
+
+      if (webhook.httpMethod) {
+        xmlBody += `\n  <webhookHTTPVerb>${this.escapeXml(webhook.httpMethod)}</webhookHTTPVerb>`;
+      }
+
+      if (webhook.webhookHeaders && Object.keys(webhook.webhookHeaders).length > 0) {
+        const headerEntries = Object.entries(webhook.webhookHeaders);
+        xmlBody += `\n  <webhookHeaderCount>${headerEntries.length}</webhookHeaderCount>`;
+        headerEntries.forEach(([ key, value ], index) => {
+          xmlBody += `\n  <webhookHeaderKey${index + 1}>${this.escapeXml(key)}</webhookHeaderKey${index + 1}>`;
+          xmlBody += `\n  <webhookHeaderValue${index + 1}>${this.escapeXml(value)}</webhookHeaderValue${index + 1}>`;
+        });
+      }
+
+      if (webhook.triggerFields && webhook.triggerFields.length > 0) {
+        xmlBody += `\n  <tfidsWhich>TRUE</tfidsWhich>`;
+        webhook.triggerFields.forEach(fieldId => {
+          xmlBody += `\n  <tfids>${fieldId}</tfids>`;
+        });
+      }
+
+      xmlBody += `\n</qdbapi>`;
+
+      const response = await this.axios.post(
+        `/tables/${tableId}?a=API_Webhooks_Create`,
+        xmlBody,
+        {
+          headers: {
+            'Content-Type': 'application/xml'
+          }
+        }
+      );
+
+      const webhookId = response.data.webhookId || response.data.id;
+      return webhookId;
+    } catch (error) {
+      console.error(`Error creating webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
+      throw error;
+    }
+  }
+
+  async listWebhooks(tableId: string): Promise<any[]> {
+    try {
+      const response = await this.axios.get(`/tables/${tableId}/webhooks`);
+      return response.data.webhooks || response.data || [];
+    } catch (error) {
+      console.error(`Error listing webhooks: ${QuickBaseClient.formatErrorForLog(error)}`);
+      throw error;
+    }
+  }
+
+  async getWebhook(tableId: string, webhookId: string): Promise<any> {
+    try {
+      const response = await this.axios.get(`/tables/${tableId}/webhooks/${webhookId}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error getting webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
+      throw error;
+    }
+  }
+
+  async deleteWebhook(tableId: string, webhookId: string): Promise<void> {
+    try {
+      await this.axios.delete(`/tables/${tableId}/webhooks/${webhookId}`);
+    } catch (error) {
+      console.error(`Error deleting webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
+      throw error;
+    }
+  }
+
+  async testWebhook(webhookUrl: string, testPayload: Record<string, any>, headers?: Record<string, string>): Promise<any> {
+    try {
+      const config: AxiosRequestConfig = {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(headers || {})
+        },
+        timeout: 10000 // 10 second timeout for test webhooks
+      };
+
+      const response = await axios.post(webhookUrl, testPayload, config);
+      return {
+        success: true,
+        statusCode: response.status,
+        data: response.data
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: QuickBaseClient.formatErrorForLog(error),
+        statusCode: axios.isAxiosError(error) ? error.response?.status : undefined
+      };
+    }
+  }
+
+  // ========== NOTIFICATION METHODS ==========
+
+  async createNotification(tableId: string, notification: {
+    label: string;
+    description?: string;
+    notificationEvent: string; // 'add', 'modify', 'delete'
+    recipientEmail: string;
+    messageSubject: string;
+    messageBody: string;
+    includeAllFields?: boolean;
+    triggerFields?: number[];
+  }): Promise<string> {
+    try {
+      let xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<qdbapi>
+  <label>${this.escapeXml(notification.label)}</label>`;
+
+      if (notification.description) {
+        xmlBody += `\n  <description>${this.escapeXml(notification.description)}</description>`;
+      }
+
+      xmlBody += `\n  <notificationEvent>${this.escapeXml(notification.notificationEvent)}</notificationEvent>`;
+      xmlBody += `\n  <recipientEmail>${this.escapeXml(notification.recipientEmail)}</recipientEmail>`;
+      xmlBody += `\n  <messageSubject>${this.escapeXml(notification.messageSubject)}</messageSubject>`;
+      xmlBody += `\n  <messageBody>${this.escapeXml(notification.messageBody)}</messageBody>`;
+
+      if (notification.triggerFields && notification.triggerFields.length > 0) {
+        xmlBody += `\n  <tfidsWhich>TRUE</tfidsWhich>`;
+        notification.triggerFields.forEach(fieldId => {
+          xmlBody += `\n  <tfids>${fieldId}</tfids>`;
+        });
+      }
+
+      xmlBody += `\n</qdbapi>`;
+
+      const response = await this.axios.post(
+        `/tables/${tableId}?a=API_SetNotification`,
+        xmlBody,
+        {
+          headers: {
+            'Content-Type': 'application/xml'
+          }
+        }
+      );
+
+      const notificationId = response.data.notificationId || response.data.id;
+      return notificationId;
+    } catch (error) {
+      console.error(`Error creating notification: ${QuickBaseClient.formatErrorForLog(error)}`);
+      throw error;
+    }
+  }
+
+  async listNotifications(tableId: string): Promise<any[]> {
+    try {
+      const response = await this.axios.get(`/tables/${tableId}/notifications`);
+      return response.data.notifications || response.data || [];
+    } catch (error) {
+      console.error(`Error listing notifications: ${QuickBaseClient.formatErrorForLog(error)}`);
+      throw error;
+    }
+  }
+
+  async deleteNotification(tableId: string, notificationId: string): Promise<void> {
+    try {
+      await this.axios.delete(`/tables/${tableId}/notifications/${notificationId}`);
+    } catch (error) {
+      console.error(`Error deleting notification: ${QuickBaseClient.formatErrorForLog(error)}`);
+      throw error;
+    }
+  }
+
+  // ========== HELPER METHODS ==========
+
+  private escapeXml(str: string): string {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
 } 
