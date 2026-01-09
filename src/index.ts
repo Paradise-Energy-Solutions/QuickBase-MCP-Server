@@ -26,7 +26,14 @@ import {
   CreateLookupFieldSchema,
   ValidateRelationshipSchema,
   CreateJunctionTableSchema,
-  GetRelationshipDetailsSchema
+  GetRelationshipDetailsSchema,
+  CreateWebhookSchema,
+  ListWebhooksSchema,
+  DeleteWebhookSchema,
+  TestWebhookSchema,
+  CreateNotificationSchema,
+  ListNotificationsSchema,
+  DeleteNotificationSchema
 } from './tools/index.js';
 import { QuickBaseConfig } from './types/quickbase.js';
 import { envFlag, loadDotenv } from './utils/env.js';
@@ -511,6 +518,145 @@ class QuickBaseMCPServer {
             );
             return {
               content: [{ type: 'text', text: JSON.stringify(junctionResult, null, 2) }]
+            };
+
+          // ========== WEBHOOK TOOLS ==========
+          case 'quickbase_create_webhook':
+            const createWebhookArgs = parseArgs('quickbase_create_webhook', CreateWebhookSchema, args);
+            const webhookId = await this.qbClient.createWebhook(
+              createWebhookArgs.tableId,
+              {
+                label: createWebhookArgs.label,
+                description: createWebhookArgs.description,
+                webhookUrl: createWebhookArgs.webhookUrl,
+                webhookEvents: createWebhookArgs.webhookEvents,
+                messageFormat: createWebhookArgs.messageFormat,
+                messageBody: createWebhookArgs.messageBody,
+                webhookHeaders: createWebhookArgs.webhookHeaders,
+                httpMethod: createWebhookArgs.httpMethod,
+                triggerFields: createWebhookArgs.triggerFields
+              }
+            );
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    webhookId,
+                    message: `Webhook "${createWebhookArgs.label}" created successfully`
+                  }, null, 2)
+                }
+              ]
+            };
+
+          case 'quickbase_list_webhooks':
+            const listWebhooksArgs = parseArgs('quickbase_list_webhooks', ListWebhooksSchema, args);
+            const webhooks = await this.qbClient.listWebhooks(listWebhooksArgs.tableId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    tableId: listWebhooksArgs.tableId,
+                    webhooks,
+                    count: webhooks.length
+                  }, null, 2)
+                }
+              ]
+            };
+
+          case 'quickbase_delete_webhook':
+            const deleteWebhookArgs = parseArgs('quickbase_delete_webhook', DeleteWebhookSchema, args);
+            await this.qbClient.deleteWebhook(deleteWebhookArgs.tableId, deleteWebhookArgs.webhookId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    message: `Webhook ${deleteWebhookArgs.webhookId} deleted successfully`
+                  }, null, 2)
+                }
+              ]
+            };
+
+          case 'quickbase_test_webhook':
+            const testWebhookArgs = parseArgs('quickbase_test_webhook', TestWebhookSchema, args);
+            const testResult = await this.qbClient.testWebhook(
+              testWebhookArgs.webhookUrl,
+              testWebhookArgs.testPayload,
+              testWebhookArgs.headers
+            );
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(testResult, null, 2)
+                }
+              ]
+            };
+
+          // ========== NOTIFICATION TOOLS ==========
+          case 'quickbase_create_notification':
+            const createNotifArgs = parseArgs('quickbase_create_notification', CreateNotificationSchema, args);
+            const notificationId = await this.qbClient.createNotification(
+              createNotifArgs.tableId,
+              {
+                label: createNotifArgs.label,
+                description: createNotifArgs.description,
+                notificationEvent: createNotifArgs.notificationEvent,
+                recipientEmail: createNotifArgs.recipientEmail,
+                messageSubject: createNotifArgs.messageSubject,
+                messageBody: createNotifArgs.messageBody,
+                includeAllFields: createNotifArgs.includeAllFields,
+                triggerFields: createNotifArgs.triggerFields
+              }
+            );
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    notificationId,
+                    message: `Notification "${createNotifArgs.label}" created successfully`
+                  }, null, 2)
+                }
+              ]
+            };
+
+          case 'quickbase_list_notifications':
+            const listNotifArgs = parseArgs('quickbase_list_notifications', ListNotificationsSchema, args);
+            const notifications = await this.qbClient.listNotifications(listNotifArgs.tableId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    tableId: listNotifArgs.tableId,
+                    notifications,
+                    count: notifications.length
+                  }, null, 2)
+                }
+              ]
+            };
+
+          case 'quickbase_delete_notification':
+            const deleteNotifArgs = parseArgs('quickbase_delete_notification', DeleteNotificationSchema, args);
+            await this.qbClient.deleteNotification(deleteNotifArgs.tableId, deleteNotifArgs.notificationId);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    message: `Notification ${deleteNotifArgs.notificationId} deleted successfully`
+                  }, null, 2)
+                }
+              ]
             };
 
           default:
