@@ -3,7 +3,9 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 export const destructiveTools = new Set([
   'quickbase_delete_table',
   'quickbase_delete_field',
-  'quickbase_delete_record'
+  'quickbase_delete_record',
+  'quickbase_delete_webhook',
+  'quickbase_delete_notification'
 ]);
 
 export const readOnlyAllowedTools = new Set([
@@ -19,7 +21,9 @@ export const readOnlyAllowedTools = new Set([
   'quickbase_get_reports',
   'quickbase_run_report',
   'quickbase_validate_relationship',
-  'quickbase_get_relationship_details'
+  'quickbase_get_relationship_details',
+  'quickbase_list_webhooks',
+  'quickbase_list_notifications'
 ]);
 
 export const confirmationRequiredTools = new Set([
@@ -32,7 +36,9 @@ export const confirmationRequiredTools = new Set([
   'quickbase_create_relationship',
   'quickbase_create_advanced_relationship',
   'quickbase_create_lookup_field',
-  'quickbase_create_junction_table'
+  'quickbase_create_junction_table',
+  'quickbase_create_webhook',
+  'quickbase_create_notification'
 ]);
 
 export function assertToolAllowed(params: {
