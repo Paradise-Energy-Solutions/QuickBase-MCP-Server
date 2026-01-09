@@ -202,6 +202,63 @@ const GetRelationshipDetailsSchema = z.object({
   includeFields: z.boolean().default(true).describe('Include related field details')
 });
 
+// ========== WEBHOOK SCHEMAS ==========
+
+const CreateWebhookSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
+  tableId: z.string().min(3).max(64).describe('Table ID'),
+  label: z.string().min(1).max(128).describe('Unique name for the webhook'),
+  description: z.string().max(1024).optional().describe('Webhook description'),
+  webhookUrl: z.string().url().describe('HTTPS endpoint URL for the webhook'),
+  webhookEvents: z.string()
+    .refine(val => /^[adm]+$/.test(val))
+    .describe('Trigger events: a (add), d (delete), m (modify) - combine as needed (e.g., "amd")'),
+  messageFormat: z.enum(['XML', 'JSON', 'RAW']).default('JSON').optional().describe('Payload format'),
+  messageBody: z.string().max(10000).optional().describe('Custom webhook message/payload'),
+  webhookHeaders: z.record(z.string()).optional().describe('Custom HTTP headers'),
+  httpMethod: z.enum(['POST', 'GET', 'PUT', 'PATCH', 'DELETE']).default('POST').optional().describe('HTTP method'),
+  triggerFields: z.array(z.number()).optional().describe('Only trigger on changes to specific field IDs')
+});
+
+const ListWebhooksSchema = z.object({
+  tableId: z.string().min(3).max(64).describe('Table ID')
+});
+
+const DeleteWebhookSchema = z.object({
+  tableId: z.string().min(3).max(64).describe('Table ID'),
+  webhookId: z.string().describe('Webhook ID to delete')
+});
+
+const TestWebhookSchema = z.object({
+  webhookUrl: z.string().url().describe('Webhook URL to test'),
+  testPayload: z.record(z.any()).describe('Test payload to send'),
+  headers: z.record(z.string()).optional().describe('Optional custom headers')
+});
+
+// ========== NOTIFICATION SCHEMAS ==========
+
+const CreateNotificationSchema = z.object({
+  confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
+  tableId: z.string().min(3).max(64).describe('Table ID'),
+  label: z.string().min(1).max(128).describe('Unique name for the notification'),
+  description: z.string().max(1024).optional().describe('Notification description'),
+  notificationEvent: z.enum(['add', 'modify', 'delete']).describe('Trigger event type'),
+  recipientEmail: z.string().email().describe('Email recipient'),
+  messageSubject: z.string().min(1).max(256).describe('Email subject'),
+  messageBody: z.string().min(1).max(10000).describe('Email body/content'),
+  includeAllFields: z.boolean().default(false).optional().describe('Include all field values in notification'),
+  triggerFields: z.array(z.number()).optional().describe('Only trigger on changes to specific field IDs')
+});
+
+const ListNotificationsSchema = z.object({
+  tableId: z.string().min(3).max(64).describe('Table ID')
+});
+
+const DeleteNotificationSchema = z.object({
+  tableId: z.string().min(3).max(64).describe('Table ID'),
+  notificationId: z.string().describe('Notification ID to delete')
+});
+
 // Define all MCP tools
 export const quickbaseTools: Tool[] = [
   // ========== APPLICATION TOOLS ==========
@@ -630,6 +687,115 @@ export const quickbaseTools: Tool[] = [
       required: ['confirm', 'junctionTableName', 'table1Id', 'table2Id', 'table1FieldLabel', 'table2FieldLabel']
     }
   },
+
+  // ========== WEBHOOK TOOLS ==========
+  {
+    name: 'quickbase_create_webhook',
+    description: 'Create a webhook for table events (add, modify, delete)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
+        tableId: { type: 'string', description: 'Table ID' },
+        label: { type: 'string', description: 'Unique name for the webhook' },
+        description: { type: 'string', description: 'Webhook description' },
+        webhookUrl: { type: 'string', description: 'HTTPS endpoint URL for the webhook' },
+        webhookEvents: { type: 'string', description: 'Trigger events: a (add), d (delete), m (modify) - combine as needed (e.g., "amd")' },
+        messageFormat: { type: 'string', enum: ['XML', 'JSON', 'RAW'], default: 'JSON', description: 'Payload format' },
+        messageBody: { type: 'string', description: 'Custom webhook message/payload' },
+        webhookHeaders: { type: 'object', additionalProperties: { type: 'string' }, description: 'Custom HTTP headers' },
+        httpMethod: { type: 'string', enum: ['POST', 'GET', 'PUT', 'PATCH', 'DELETE'], default: 'POST', description: 'HTTP method' },
+        triggerFields: { type: 'array', items: { type: 'number' }, description: 'Only trigger on changes to specific field IDs' }
+      },
+      required: ['confirm', 'tableId', 'label', 'webhookUrl', 'webhookEvents']
+    }
+  },
+
+  {
+    name: 'quickbase_list_webhooks',
+    description: 'List all webhooks for a table',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tableId: { type: 'string', description: 'Table ID' }
+      },
+      required: ['tableId']
+    }
+  },
+
+  {
+    name: 'quickbase_delete_webhook',
+    description: 'Delete a webhook from a table',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tableId: { type: 'string', description: 'Table ID' },
+        webhookId: { type: 'string', description: 'Webhook ID to delete' }
+      },
+      required: ['tableId', 'webhookId']
+    }
+  },
+
+  {
+    name: 'quickbase_test_webhook',
+    description: 'Test a webhook by sending a test payload',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        webhookUrl: { type: 'string', description: 'Webhook URL to test' },
+        testPayload: { type: 'object', description: 'Test payload to send', additionalProperties: true },
+        headers: { type: 'object', additionalProperties: { type: 'string' }, description: 'Optional custom headers' }
+      },
+      required: ['webhookUrl', 'testPayload']
+    }
+  },
+
+  // ========== NOTIFICATION TOOLS ==========
+  {
+    name: 'quickbase_create_notification',
+    description: 'Create an email notification for table record events',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        confirm: { type: 'boolean', description: 'Required confirmation for schema-modifying operations (must be true)' },
+        tableId: { type: 'string', description: 'Table ID' },
+        label: { type: 'string', description: 'Unique name for the notification' },
+        description: { type: 'string', description: 'Notification description' },
+        notificationEvent: { type: 'string', enum: ['add', 'modify', 'delete'], description: 'Trigger event type' },
+        recipientEmail: { type: 'string', description: 'Email recipient' },
+        messageSubject: { type: 'string', description: 'Email subject' },
+        messageBody: { type: 'string', description: 'Email body/content' },
+        includeAllFields: { type: 'boolean', default: false, description: 'Include all field values in notification' },
+        triggerFields: { type: 'array', items: { type: 'number' }, description: 'Only trigger on changes to specific field IDs' }
+      },
+      required: ['confirm', 'tableId', 'label', 'notificationEvent', 'recipientEmail', 'messageSubject', 'messageBody']
+    }
+  },
+
+  {
+    name: 'quickbase_list_notifications',
+    description: 'List all email notifications for a table',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tableId: { type: 'string', description: 'Table ID' }
+      },
+      required: ['tableId']
+    }
+  },
+
+  {
+    name: 'quickbase_delete_notification',
+    description: 'Delete an email notification from a table',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tableId: { type: 'string', description: 'Table ID' },
+        notificationId: { type: 'string', description: 'Notification ID to delete' }
+      },
+      required: ['tableId', 'notificationId']
+    }
+  },
 ];
 
 // Export schemas for validation
@@ -648,5 +814,12 @@ export {
   CreateLookupFieldSchema,
   ValidateRelationshipSchema,
   CreateJunctionTableSchema,
-  GetRelationshipDetailsSchema
+  GetRelationshipDetailsSchema,
+  CreateWebhookSchema,
+  ListWebhooksSchema,
+  DeleteWebhookSchema,
+  TestWebhookSchema,
+  CreateNotificationSchema,
+  ListNotificationsSchema,
+  DeleteNotificationSchema
 }; 
