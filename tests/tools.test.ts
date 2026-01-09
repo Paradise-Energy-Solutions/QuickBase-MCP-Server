@@ -12,6 +12,13 @@ import {
   CreateAdvancedRelationshipSchema,
   CreateLookupFieldSchema,
   ValidateRelationshipSchema,
+  CreateWebhookSchema,
+  ListWebhooksSchema,
+  DeleteWebhookSchema,
+  TestWebhookSchema,
+  CreateNotificationSchema,
+  ListNotificationsSchema,
+  DeleteNotificationSchema,
   quickbaseTools
 } from '../src/tools/index';
 
@@ -567,6 +574,304 @@ describe('Tool Definitions', () => {
     it('should include bulk_create_records tool', () => {
       const tool = quickbaseTools.find(t => t.name === 'quickbase_bulk_create_records');
       expect(tool).toBeDefined();
+    });
+  });
+
+  describe('Webhook Schemas', () => {
+    describe('CreateWebhookSchema', () => {
+      it('should validate webhook creation with required fields', () => {
+        const data = {
+          confirm: true,
+          tableId: 'bux123',
+          label: 'My Webhook',
+          webhookUrl: 'https://example.com/webhook',
+          webhookEvents: 'amd'
+        };
+        expect(CreateWebhookSchema.parse(data)).toEqual(data);
+      });
+
+      it('should require confirm: true', () => {
+        expect(() =>
+          CreateWebhookSchema.parse({
+            tableId: 'bux123',
+            label: 'My Webhook',
+            webhookUrl: 'https://example.com/webhook',
+            webhookEvents: 'amd'
+          })
+        ).toThrow();
+      });
+
+      it('should validate webhook events (a, d, m combinations)', () => {
+        const validCombos = ['a', 'd', 'm', 'ad', 'am', 'dm', 'adm', 'mda'];
+        validCombos.forEach(combo => {
+          expect(
+            CreateWebhookSchema.parse({
+              confirm: true,
+              tableId: 'bux123',
+              label: 'Webhook',
+              webhookUrl: 'https://example.com/webhook',
+              webhookEvents: combo
+            })
+          ).toBeDefined();
+        });
+      });
+
+      it('should reject invalid webhook events', () => {
+        expect(() =>
+          CreateWebhookSchema.parse({
+            confirm: true,
+            tableId: 'bux123',
+            label: 'Webhook',
+            webhookUrl: 'https://example.com/webhook',
+            webhookEvents: 'xyz'
+          })
+        ).toThrow();
+      });
+
+      it('should validate with optional parameters', () => {
+        const data = {
+          confirm: true,
+          tableId: 'bux123',
+          label: 'My Webhook',
+          webhookUrl: 'https://example.com/webhook',
+          webhookEvents: 'amd',
+          description: 'Test webhook',
+          messageFormat: 'JSON',
+          messageBody: '{"test": true}',
+          webhookHeaders: { 'Authorization': 'Bearer token' },
+          httpMethod: 'POST',
+          triggerFields: [6, 7, 8]
+        };
+        expect(CreateWebhookSchema.parse(data)).toEqual(data);
+      });
+
+      it('should reject invalid URL format', () => {
+        expect(() =>
+          CreateWebhookSchema.parse({
+            confirm: true,
+            tableId: 'bux123',
+            label: 'Webhook',
+            webhookUrl: 'not-a-url',
+            webhookEvents: 'a'
+          })
+        ).toThrow();
+      });
+    });
+
+    describe('ListWebhooksSchema', () => {
+      it('should validate listing webhooks', () => {
+        const data = { tableId: 'bux123' };
+        expect(ListWebhooksSchema.parse(data)).toEqual(data);
+      });
+
+      it('should require tableId', () => {
+        expect(() => ListWebhooksSchema.parse({})).toThrow();
+      });
+    });
+
+    describe('DeleteWebhookSchema', () => {
+      it('should validate webhook deletion', () => {
+        const data = { tableId: 'bux123', webhookId: 'webhook456' };
+        expect(DeleteWebhookSchema.parse(data)).toEqual(data);
+      });
+
+      it('should require both tableId and webhookId', () => {
+        expect(() => DeleteWebhookSchema.parse({ tableId: 'bux123' })).toThrow();
+        expect(() => DeleteWebhookSchema.parse({ webhookId: 'webhook456' })).toThrow();
+      });
+    });
+
+    describe('TestWebhookSchema', () => {
+      it('should validate webhook testing', () => {
+        const data = {
+          webhookUrl: 'https://example.com/webhook',
+          testPayload: { recordId: 123, event: 'add' }
+        };
+        expect(TestWebhookSchema.parse(data)).toEqual(data);
+      });
+
+      it('should allow optional headers', () => {
+        const data = {
+          webhookUrl: 'https://example.com/webhook',
+          testPayload: { test: true },
+          headers: { 'X-Custom': 'value' }
+        };
+        expect(TestWebhookSchema.parse(data)).toEqual(data);
+      });
+
+      it('should require webhookUrl and testPayload', () => {
+        expect(() =>
+          TestWebhookSchema.parse({ testPayload: { test: true } })
+        ).toThrow();
+        expect(() =>
+          TestWebhookSchema.parse({ webhookUrl: 'https://example.com' })
+        ).toThrow();
+      });
+    });
+  });
+
+  describe('Notification Schemas', () => {
+    describe('CreateNotificationSchema', () => {
+      it('should validate notification creation with required fields', () => {
+        const data = {
+          confirm: true,
+          tableId: 'bux123',
+          label: 'Email Alert',
+          notificationEvent: 'add',
+          recipientEmail: 'user@example.com',
+          messageSubject: 'New Record Added',
+          messageBody: 'A new record was added to the table.'
+        };
+        expect(CreateNotificationSchema.parse(data)).toEqual(data);
+      });
+
+      it('should require confirm: true', () => {
+        expect(() =>
+          CreateNotificationSchema.parse({
+            tableId: 'bux123',
+            label: 'Email Alert',
+            notificationEvent: 'add',
+            recipientEmail: 'user@example.com',
+            messageSubject: 'New Record',
+            messageBody: 'Body'
+          })
+        ).toThrow();
+      });
+
+      it('should validate notification event types', () => {
+        const events = ['add', 'modify', 'delete'];
+        events.forEach(event => {
+          expect(
+            CreateNotificationSchema.parse({
+              confirm: true,
+              tableId: 'bux123',
+              label: 'Alert',
+              notificationEvent: event,
+              recipientEmail: 'user@example.com',
+              messageSubject: 'Subject',
+              messageBody: 'Body'
+            })
+          ).toBeDefined();
+        });
+      });
+
+      it('should reject invalid notification event types', () => {
+        expect(() =>
+          CreateNotificationSchema.parse({
+            confirm: true,
+            tableId: 'bux123',
+            label: 'Alert',
+            notificationEvent: 'invalid',
+            recipientEmail: 'user@example.com',
+            messageSubject: 'Subject',
+            messageBody: 'Body'
+          })
+        ).toThrow();
+      });
+
+      it('should validate email format', () => {
+        expect(() =>
+          CreateNotificationSchema.parse({
+            confirm: true,
+            tableId: 'bux123',
+            label: 'Alert',
+            notificationEvent: 'add',
+            recipientEmail: 'not-an-email',
+            messageSubject: 'Subject',
+            messageBody: 'Body'
+          })
+        ).toThrow();
+      });
+
+      it('should validate with optional parameters', () => {
+        const data = {
+          confirm: true,
+          tableId: 'bux123',
+          label: 'Email Alert',
+          description: 'Alert for new records',
+          notificationEvent: 'add',
+          recipientEmail: 'user@example.com',
+          messageSubject: 'New Record Added',
+          messageBody: 'A new record was added.',
+          includeAllFields: true,
+          triggerFields: [6, 7]
+        };
+        expect(CreateNotificationSchema.parse(data)).toEqual(data);
+      });
+    });
+
+    describe('ListNotificationsSchema', () => {
+      it('should validate listing notifications', () => {
+        const data = { tableId: 'bux123' };
+        expect(ListNotificationsSchema.parse(data)).toEqual(data);
+      });
+
+      it('should require tableId', () => {
+        expect(() => ListNotificationsSchema.parse({})).toThrow();
+      });
+    });
+
+    describe('DeleteNotificationSchema', () => {
+      it('should validate notification deletion', () => {
+        const data = { tableId: 'bux123', notificationId: 'notif789' };
+        expect(DeleteNotificationSchema.parse(data)).toEqual(data);
+      });
+
+      it('should require both tableId and notificationId', () => {
+        expect(() => DeleteNotificationSchema.parse({ tableId: 'bux123' })).toThrow();
+        expect(() => DeleteNotificationSchema.parse({ notificationId: 'notif789' })).toThrow();
+      });
+    });
+  });
+
+  describe('Tool Definitions - Webhooks and Notifications', () => {
+    it('should include create_webhook tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_create_webhook');
+      expect(tool).toBeDefined();
+      expect(tool?.description).toContain('webhook');
+    });
+
+    it('should include list_webhooks tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_list_webhooks');
+      expect(tool).toBeDefined();
+    });
+
+    it('should include delete_webhook tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_delete_webhook');
+      expect(tool).toBeDefined();
+    });
+
+    it('should include test_webhook tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_test_webhook');
+      expect(tool).toBeDefined();
+    });
+
+    it('should include create_notification tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_create_notification');
+      expect(tool).toBeDefined();
+      expect(tool?.description).toContain('notification');
+    });
+
+    it('should include list_notifications tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_list_notifications');
+      expect(tool).toBeDefined();
+    });
+
+    it('should include delete_notification tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_delete_notification');
+      expect(tool).toBeDefined();
+    });
+
+    it('create_webhook should require confirm parameter', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_create_webhook');
+      const required = (tool?.inputSchema as any).required || [];
+      expect(required).toContain('confirm');
+    });
+
+    it('create_notification should require confirm parameter', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_create_notification');
+      const required = (tool?.inputSchema as any).required || [];
+      expect(required).toContain('confirm');
     });
   });
 });
