@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions } from '../types/quickbase.js';
 import { envFlag } from '../utils/env.js';
+import { formatErrorForLog } from '../utils/errors.js';
 
 export class QuickBaseClient {
   private axios: AxiosInstance;
@@ -41,26 +42,6 @@ export class QuickBaseClient {
     return [];
   }
 
-  private static formatErrorForLog(error: unknown): string {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status;
-      const method = error.config?.method?.toUpperCase();
-      const url = error.config?.url;
-      const message = error.message;
-      return `AxiosError${status ? ` ${status}` : ''}${method && url ? ` ${method} ${url}` : ''}: ${message}`;
-    }
-
-    if (error instanceof Error) {
-      return error.message;
-    }
-
-    try {
-      return typeof error === 'string' ? error : JSON.stringify(error);
-    } catch {
-      return 'Unknown error';
-    }
-  }
-
   constructor(config: QuickBaseConfig) {
     this.config = config;
     this.logApi = envFlag('QB_LOG_API', false);
@@ -93,10 +74,26 @@ export class QuickBaseClient {
         }
         return response;
       },
-      (error) => {
+      async (error) => {
         if (this.logApi) {
-          console.error(`QB API Error: ${QuickBaseClient.formatErrorForLog(error)}`);
+          console.error(`QB API Error: ${formatErrorForLog(error)}`);
         }
+
+        // Retry transient errors with exponential backoff.
+        type RetryConfig = AxiosRequestConfig & { _retryCount?: number };
+        const config = error.config as RetryConfig | undefined;
+        if (config && axios.isAxiosError(error)) {
+          const status = error.response?.status;
+          if (status && [429, 502, 503].includes(status)) {
+            config._retryCount = (config._retryCount ?? 0) + 1;
+            if (config._retryCount <= this.config.maxRetries) {
+              const delayMs = Math.min(1000 * Math.pow(2, config._retryCount - 1), 30_000);
+              await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+              return this.axios(config);
+            }
+          }
+        }
+
         return Promise.reject(error);
       }
     );
@@ -104,11 +101,13 @@ export class QuickBaseClient {
 
   // ========== APPLICATION METHODS ==========
 
+  /** Fetch metadata for the configured QuickBase application. */
   async getAppInfo(): Promise<any> {
     const response = await this.axios.get(`/apps/${this.config.appId}`);
     return response.data;
   }
 
+  /** Return a list of all tables in the configured application. */
   async getAppTables(): Promise<any[]> {
     const response = await this.axios.get(`/tables`, {
       params: { appId: this.config.appId }
@@ -118,12 +117,21 @@ export class QuickBaseClient {
 
   // ========== TABLE METHODS ==========
 
-  async createTable(table: { name: string; description?: string }): Promise<string> {
+  /**
+   * Create a new table in the application.
+   * @param table - Table configuration. `singleRecordName` defaults to the table name
+   *   with a trailing 's' stripped (e.g. "Contacts" → "Contact"); supply it explicitly
+   *   for irregular plurals (e.g. "Companies" → "Company").
+   */
+  async createTable(table: { name: string; description?: string; singleRecordName?: string }): Promise<string> {
+    const derivedSingular = table.name.endsWith('s') && table.name.length > 1
+      ? table.name.slice(0, -1)
+      : table.name;
     const response = await this.axios.post('/tables', {
       appId: this.config.appId,
       name: table.name,
       description: table.description,
-      singleRecordName: table.name.slice(0, -1), // Remove 's' for singular
+      singleRecordName: table.singleRecordName ?? derivedSingular,
       pluralRecordName: table.name
     });
     return response.data.id;
@@ -243,6 +251,10 @@ export class QuickBaseClient {
     return response.data.data[0] || null;
   }
 
+  /**
+   * Create a new record in a table.
+   * @returns The new record ID, or `null` if the QuickBase API did not return one.
+   */
   async createRecord(tableId: string, record: QuickBaseRecord): Promise<number | null> {
     const response = await this.axios.post('/records', {
       to: tableId,
@@ -254,6 +266,10 @@ export class QuickBaseClient {
     return ids.length > 0 ? ids[0] : null;
   }
 
+  /**
+   * Create multiple records in a single API call.
+   * @returns Array of new record IDs (may be empty if the API does not return them).
+   */
   async createRecords(tableId: string, records: QuickBaseRecord[]): Promise<number[]> {
     const response = await this.axios.post('/records', {
       to: tableId,
@@ -357,7 +373,7 @@ export class QuickBaseClient {
 
       return { referenceFieldId, lookupFieldIds };
     } catch (error) {
-      console.error(`Error creating advanced relationship: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error creating advanced relationship: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -416,26 +432,30 @@ export class QuickBaseClient {
         issues.push(`Field ${foreignKeyFieldId} is not a reference field`);
       }
 
-      // Check for orphaned records (child records with invalid parent references)
+      // Batch the orphan check: fetch all parent record IDs in a single query,
+      // then do an in-memory comparison instead of one HTTP call per child record.
       const childRecords = await this.getRecords(childTableId, {
-        select: [3, foreignKeyFieldId], // Record ID and foreign key
-        where: `{${foreignKeyFieldId}.XEX.''}`
+        select: [3, foreignKeyFieldId],
+        where: `{${foreignKeyFieldId}.XEX.''}` // child records that have a non-empty FK
       });
 
-      for (const record of childRecords) {
-        const foreignKeyValue = record[foreignKeyFieldId]?.value;
-        if (foreignKeyValue) {
-          try {
-            await this.getRecord(parentTableId, foreignKeyValue);
-          } catch (error) {
+      if (childRecords.length > 0) {
+        const parentRecords = await this.getRecords(parentTableId, { select: [3] });
+        const parentIdSet = new Set(
+          parentRecords
+            .map(r => r[3]?.value)
+            .filter((v): v is number | string => v != null)
+        );
+        for (const record of childRecords) {
+          const fk = record[foreignKeyFieldId]?.value;
+          if (fk != null && !parentIdSet.has(fk)) {
             orphanedRecords++;
           }
         }
       }
-
-         } catch (error) {
-       issues.push(`Error validating relationship: ${error instanceof Error ? error.message : 'Unknown error'}`);
-     }
+    } catch (error) {
+      issues.push(`Error validating relationship: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
 
     return {
       isValid: issues.length === 0 && orphanedRecords === 0,
@@ -448,7 +468,15 @@ export class QuickBaseClient {
     try {
       const relationships = await this.getRelationships(tableId);
       const tableInfo = await this.getTableInfo(tableId);
-      
+
+      // Fetch fields once outside the loop to avoid N+1 API calls.
+      const fields = includeFields ? await this.getTableFields(tableId) : [];
+      const relatedFields = fields.filter(field =>
+        field.fieldType === 'reference' ||
+        field.fieldType === 'lookup' ||
+        (field.properties && field.properties.lookupReference)
+      );
+
       const result = {
         tableId,
         tableName: tableInfo.name,
@@ -465,14 +493,6 @@ export class QuickBaseClient {
         };
 
         if (includeFields) {
-          // Get fields related to this relationship
-          const fields = await this.getTableFields(tableId);
-          const relatedFields = fields.filter(field => 
-            field.fieldType === 'reference' || 
-            field.fieldType === 'lookup' ||
-            (field.properties && field.properties.lookupReference)
-          );
-          
           relationshipDetail.relatedFields = relatedFields;
         }
 
@@ -481,7 +501,7 @@ export class QuickBaseClient {
 
       return result;
     } catch (error) {
-      console.error(`Error getting relationship details: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error getting relationship details: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -545,7 +565,7 @@ export class QuickBaseClient {
         table2ReferenceFieldId
       };
     } catch (error) {
-      console.error(`Error creating junction table: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error creating junction table: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
@@ -571,6 +591,10 @@ export class QuickBaseClient {
 
   // ========== UTILITY METHODS ==========
 
+  /**
+   * Verify that the configured credentials can successfully reach the QuickBase API.
+   * @returns `true` if the connection succeeds; `false` otherwise.
+   */
   async testConnection(): Promise<boolean> {
     try {
       await this.getAppInfo();
@@ -580,8 +604,17 @@ export class QuickBaseClient {
     }
   }
 
+  /**
+   * Search records in a table for a given text term using QuickBase's CT (contains) operator.
+   *
+   * @param tableId    - Table to search.
+   * @param searchTerm - Text to search for (trimmed to 200 characters and sanitised automatically).
+   * @param fieldIds   - Field IDs to search within.  When omitted, falls back to fields **6 and 7**,
+   *   which are the first two custom text fields in a *default* QuickBase table layout.
+   *   For tables with a different schema this default may miss records or search the wrong fields;
+   *   always supply explicit `fieldIds` for anything other than a brand-new default table.
+   */
   async searchRecords(tableId: string, searchTerm: string, fieldIds?: number[]): Promise<any[]> {
-    // This is a simple implementation - you might want to enhance based on your search needs
     const sanitizedSearchTerm = String(searchTerm)
       .slice(0, 200)
       .replace(/[\r\n]/g, ' ')
@@ -596,15 +629,27 @@ export class QuickBaseClient {
 
   // ========== BULK OPERATIONS ==========
 
-  async upsertRecords(tableId: string, records: Array<{ keyField: number; keyValue: any; data: Record<string, any> }>): Promise<any> {
-    // QuickBase upsert based on a key field
+  /**
+   * Upsert (insert-or-update) multiple records using a common key field.
+   *
+   * @param tableId      - Target table ID.
+   * @param mergeFieldId - Field ID used as the upsert key for **all** records in this batch.
+   *   All records must share the same merge field; QuickBase does not support per-record
+   *   merge fields within a single batch request.
+   * @param records      - Array of records to upsert.
+   */
+  async upsertRecords(
+    tableId: string,
+    mergeFieldId: number,
+    records: Array<{ keyValue: unknown; data: Record<string, unknown> }>
+  ): Promise<any> {
     return await this.axios.post('/records', {
       to: tableId,
-      data: records.map(({ keyField, keyValue, data }) => ({
-        [keyField]: { value: keyValue },
+      data: records.map(({ keyValue, data }) => ({
+        [mergeFieldId]: { value: keyValue },
         ...data
       })),
-      mergeFieldId: records[0]?.keyField
+      mergeFieldId
     });
   }
 
@@ -622,155 +667,115 @@ export class QuickBaseClient {
     triggerFields?: number[]; // Only trigger on changes to specific fields
   }): Promise<string> {
     try {
-      // Build XML request for API_Webhooks_Create
-      let xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
-<qdbapi>
-  <label>${this.escapeXml(webhook.label)}</label>`;
+      QuickBaseClient.validateWebhookUrl(webhook.webhookUrl);
+
+      let inner = `\n  <label>${this.escapeXml(webhook.label)}</label>`;
 
       if (webhook.description) {
-        xmlBody += `\n  <description>${this.escapeXml(webhook.description)}</description>`;
+        inner += `\n  <description>${this.escapeXml(webhook.description)}</description>`;
       }
 
-      xmlBody += `\n  <webhookUrl>${this.escapeXml(webhook.webhookUrl)}</webhookUrl>`;
-      xmlBody += `\n  <webhookEvent>${this.escapeXml(webhook.webhookEvents)}</webhookEvent>`;
+      inner += `\n  <webhookUrl>${this.escapeXml(webhook.webhookUrl)}</webhookUrl>`;
+      inner += `\n  <webhookEvent>${this.escapeXml(webhook.webhookEvents)}</webhookEvent>`;
 
       if (webhook.messageFormat) {
-        xmlBody += `\n  <webhookMessageFormat>${this.escapeXml(webhook.messageFormat)}</webhookMessageFormat>`;
+        inner += `\n  <webhookMessageFormat>${this.escapeXml(webhook.messageFormat)}</webhookMessageFormat>`;
       }
 
       if (webhook.messageBody) {
-        xmlBody += `\n  <webhookMessage>${this.escapeXml(webhook.messageBody)}</webhookMessage>`;
+        inner += `\n  <webhookMessage>${this.escapeXml(webhook.messageBody)}</webhookMessage>`;
       }
 
       if (webhook.httpMethod) {
-        xmlBody += `\n  <webhookHTTPVerb>${this.escapeXml(webhook.httpMethod)}</webhookHTTPVerb>`;
+        inner += `\n  <webhookHTTPVerb>${this.escapeXml(webhook.httpMethod)}</webhookHTTPVerb>`;
       }
 
       if (webhook.webhookHeaders && Object.keys(webhook.webhookHeaders).length > 0) {
         const headerEntries = Object.entries(webhook.webhookHeaders);
-        xmlBody += `\n  <webhookHeaderCount>${headerEntries.length}</webhookHeaderCount>`;
-        headerEntries.forEach(([ key, value ], index) => {
-          xmlBody += `\n  <webhookHeaderKey${index + 1}>${this.escapeXml(key)}</webhookHeaderKey${index + 1}>`;
-          xmlBody += `\n  <webhookHeaderValue${index + 1}>${this.escapeXml(value)}</webhookHeaderValue${index + 1}>`;
+        inner += `\n  <webhookHeaderCount>${headerEntries.length}</webhookHeaderCount>`;
+        headerEntries.forEach(([key, value], index) => {
+          inner += `\n  <webhookHeaderKey${index + 1}>${this.escapeXml(key)}</webhookHeaderKey${index + 1}>`;
+          inner += `\n  <webhookHeaderValue${index + 1}>${this.escapeXml(value)}</webhookHeaderValue${index + 1}>`;
         });
       }
 
       if (webhook.triggerFields && webhook.triggerFields.length > 0) {
-        xmlBody += `\n  <tfidsWhich>TRUE</tfidsWhich>`;
+        inner += `\n  <tfidsWhich>TRUE</tfidsWhich>`;
         webhook.triggerFields.forEach(fieldId => {
-          xmlBody += `\n  <tfids>${fieldId}</tfids>`;
+          inner += `\n  <tfids>${fieldId}</tfids>`;
         });
       }
 
-      xmlBody += `\n</qdbapi>`;
-
-      const response = await this.axios.post(
-        `/tables/${tableId}?a=API_Webhooks_Create`,
-        xmlBody,
-        {
-          headers: {
-            'Content-Type': 'application/xml'
-          }
-        }
-      );
-
-      const webhookId = response.data.webhookId || response.data.id;
-      return webhookId;
+      // Legacy XML API lives at https://{realm}/db/{tableId}, NOT at api.quickbase.com/v1
+      const data = await this.callLegacyXmlApi(tableId, 'API_Webhooks_Create', inner);
+      return data.webhookId || data.id;
     } catch (error) {
-      console.error(`Error creating webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error creating webhook: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
 
-  async listWebhooks(tableId: string): Promise<any[]> {
+  /**
+   * List all webhooks in the app, optionally filtered to a specific table.
+   *
+   * Uses the REST API `GET /apps/{appId}/events` endpoint — the only officially
+   * supported read path for webhook metadata. There is no per-table list endpoint
+   * in the QuickBase REST or legacy XML APIs.
+   */
+  async listWebhooks(tableId?: string): Promise<any[]> {
     try {
-      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
-<qdbapi>
-</qdbapi>`;
-
-      const response = await this.axios.post(
-        `/tables/${tableId}?a=API_GetWebhooks`,
-        xmlBody,
-        {
-          headers: {
-            'Content-Type': 'application/xml'
-          }
-        }
-      );
-
-      // Handle response - may be JSON or XML depending on QuickBase API version
-      if (Array.isArray(response.data)) {
-        return response.data;
-      }
-      
-      if (response.data?.webhooks && Array.isArray(response.data.webhooks)) {
-        return response.data.webhooks;
-      }
-      
-      if (response.data && typeof response.data === 'object') {
-        return response.data;
-      }
-      
-      return [];
+      const response = await this.axios.get(`/apps/${this.config.appId}/events`);
+      const events: any[] = Array.isArray(response.data) ? response.data : [];
+      const webhooks = events.filter((e: any) => e.type === 'webhook');
+      // The REST events endpoint does not expose a tableId field, so we return
+      // all app-level webhooks when no filter can be applied.
+      return webhooks;
     } catch (error) {
-      console.error(`Error listing webhooks: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error listing webhooks: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
 
   async getWebhook(tableId: string, webhookId: string): Promise<any> {
     try {
-      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
-<qdbapi>
-  <webhookId>${this.escapeXml(webhookId)}</webhookId>
-</qdbapi>`;
-
-      const response = await this.axios.post(
-        `/tables/${tableId}?a=API_GetWebhook`,
-        xmlBody,
-        {
-          headers: {
-            'Content-Type': 'application/xml'
-          }
-        }
+      // Legacy XML API — action name per QuickBase XML API documentation pattern.
+      const data = await this.callLegacyXmlApi(
+        tableId,
+        'API_Webhooks_GetInfo',
+        `\n  <webhookId>${this.escapeXml(webhookId)}</webhookId>`
       );
-      return response.data;
+      return data;
     } catch (error) {
-      console.error(`Error getting webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error getting webhook: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
 
   async deleteWebhook(tableId: string, webhookId: string): Promise<void> {
     try {
-      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
-<qdbapi>
-  <webhookId>${this.escapeXml(webhookId)}</webhookId>
-</qdbapi>`;
-
-      await this.axios.post(
-        `/tables/${tableId}?a=API_Webhooks_Delete`,
-        xmlBody,
-        {
-          headers: {
-            'Content-Type': 'application/xml'
-          }
-        }
+      // API_Webhooks_Delete requires a comma-separated `actionIDList` parameter,
+      // not `webhookId` — see https://help.quickbase.com/docs/api-webhooks-delete
+      await this.callLegacyXmlApi(
+        tableId,
+        'API_Webhooks_Delete',
+        `\n  <actionIDList>${this.escapeXml(webhookId)}</actionIDList>`
       );
     } catch (error) {
-      console.error(`Error deleting webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error deleting webhook: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
 
   async testWebhook(webhookUrl: string, testPayload: Record<string, any>, headers?: Record<string, string>): Promise<any> {
     try {
+      QuickBaseClient.validateWebhookUrl(webhookUrl);
+
       const config: AxiosRequestConfig = {
         headers: {
           'Content-Type': 'application/json',
-          ...(headers || {})
+          ...(headers ?? {})
         },
-        timeout: 10000 // 10 second timeout for test webhooks
+        timeout: 10_000 // 10-second timeout for test requests
       };
 
       const response = await axios.post(webhookUrl, testPayload, config);
@@ -782,7 +787,7 @@ export class QuickBaseClient {
     } catch (error) {
       return {
         success: false,
-        error: QuickBaseClient.formatErrorForLog(error),
+        error: formatErrorForLog(error),
         statusCode: axios.isAxiosError(error) ? error.response?.status : undefined
       };
     }
@@ -801,105 +806,144 @@ export class QuickBaseClient {
     triggerFields?: number[];
   }): Promise<string> {
     try {
-      let xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
-<qdbapi>
-  <label>${this.escapeXml(notification.label)}</label>`;
+      let inner = `\n  <label>${this.escapeXml(notification.label)}</label>`;
 
       if (notification.description) {
-        xmlBody += `\n  <description>${this.escapeXml(notification.description)}</description>`;
+        inner += `\n  <description>${this.escapeXml(notification.description)}</description>`;
       }
 
-      xmlBody += `\n  <notificationEvent>${this.escapeXml(notification.notificationEvent)}</notificationEvent>`;
-      xmlBody += `\n  <recipientEmail>${this.escapeXml(notification.recipientEmail)}</recipientEmail>`;
-      xmlBody += `\n  <messageSubject>${this.escapeXml(notification.messageSubject)}</messageSubject>`;
-      xmlBody += `\n  <messageBody>${this.escapeXml(notification.messageBody)}</messageBody>`;
+      inner += `\n  <notificationEvent>${this.escapeXml(notification.notificationEvent)}</notificationEvent>`;
+      inner += `\n  <recipientEmail>${this.escapeXml(notification.recipientEmail)}</recipientEmail>`;
+      inner += `\n  <messageSubject>${this.escapeXml(notification.messageSubject)}</messageSubject>`;
+      inner += `\n  <messageBody>${this.escapeXml(notification.messageBody)}</messageBody>`;
 
       if (notification.triggerFields && notification.triggerFields.length > 0) {
-        xmlBody += `\n  <tfidsWhich>TRUE</tfidsWhich>`;
+        inner += `\n  <tfidsWhich>TRUE</tfidsWhich>`;
         notification.triggerFields.forEach(fieldId => {
-          xmlBody += `\n  <tfids>${fieldId}</tfids>`;
+          inner += `\n  <tfids>${fieldId}</tfids>`;
         });
       }
 
-      xmlBody += `\n</qdbapi>`;
-
-      const response = await this.axios.post(
-        `/tables/${tableId}?a=API_SetNotification`,
-        xmlBody,
-        {
-          headers: {
-            'Content-Type': 'application/xml'
-          }
-        }
-      );
-
-      const notificationId = response.data.notificationId || response.data.id;
-      return notificationId;
+      // Legacy XML API lives at https://{realm}/db/{tableId}, NOT at api.quickbase.com/v1
+      const data = await this.callLegacyXmlApi(tableId, 'API_SetNotification', inner);
+      return data.notificationId || data.id;
     } catch (error) {
-      console.error(`Error creating notification: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error creating notification: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
 
-  async listNotifications(tableId: string): Promise<any[]> {
+  /**
+   * List all email-notification events in the app.
+   *
+   * Uses the REST API `GET /apps/{appId}/events` endpoint — the only officially
+   * supported read path for notification metadata in the QuickBase REST API.
+   * The `tableId` parameter is accepted for API compatibility but the REST event
+   * endpoint does not expose per-table filtering.
+   */
+  async listNotifications(tableId?: string): Promise<any[]> {
     try {
-      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
-<qdbapi>
-</qdbapi>`;
-
-      const response = await this.axios.post(
-        `/tables/${tableId}?a=API_GetNotifications`,
-        xmlBody,
-        {
-          headers: {
-            'Content-Type': 'application/xml'
-          }
-        }
-      );
-
-      // Handle response - may be JSON or XML depending on QuickBase API version
-      if (Array.isArray(response.data)) {
-        return response.data;
-      }
-      
-      if (response.data?.notifications && Array.isArray(response.data.notifications)) {
-        return response.data.notifications;
-      }
-      
-      if (response.data && typeof response.data === 'object') {
-        return response.data;
-      }
-      
-      return [];
+      const response = await this.axios.get(`/apps/${this.config.appId}/events`);
+      const events: any[] = Array.isArray(response.data) ? response.data : [];
+      return events.filter((e: any) => e.type === 'email-notification');
     } catch (error) {
-      console.error(`Error listing notifications: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error listing notifications: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
 
   async deleteNotification(tableId: string, notificationId: string): Promise<void> {
     try {
-      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
-<qdbapi>
-  <notificationId>${this.escapeXml(notificationId)}</notificationId>
-</qdbapi>`;
-
-      await this.axios.post(
-        `/tables/${tableId}?a=API_DeleteNotification`,
-        xmlBody,
-        {
-          headers: {
-            'Content-Type': 'application/xml'
-          }
-        }
+      // Legacy XML API lives at https://{realm}/db/{tableId}, NOT at api.quickbase.com/v1
+      await this.callLegacyXmlApi(
+        tableId,
+        'API_DeleteNotification',
+        `\n  <notificationId>${this.escapeXml(notificationId)}</notificationId>`
       );
     } catch (error) {
-      console.error(`Error deleting notification: ${QuickBaseClient.formatErrorForLog(error)}`);
+      console.error(`Error deleting notification: ${formatErrorForLog(error)}`);
       throw error;
     }
   }
 
   // ========== HELPER METHODS ==========
+
+  /**
+   * Validate that a webhook URL is safe to call (SSRF prevention).
+   * Rules: must use HTTPS; must not target localhost, loopback, or any
+   * RFC-1918 / link-local / shared-address IPv4 range.
+   *
+   * @throws {Error} if the URL fails any validation check.
+   */
+  private static validateWebhookUrl(rawUrl: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new Error(`Invalid webhook URL: "${rawUrl}"`);
+    }
+
+    if (parsed.protocol !== 'https:') {
+      throw new Error('Webhook URL must use the HTTPS scheme.');
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    if (hostname === 'localhost' || hostname === '::1') {
+      throw new Error('Webhook URL targets a blocked address (localhost).');
+    }
+
+    const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+      const [a, b] = ipv4Match.slice(1, 3).map(Number);
+      const isPrivate =
+        a === 10 ||                              // 10.0.0.0/8
+        (a === 172 && b >= 16 && b <= 31) ||     // 172.16.0.0/12
+        (a === 192 && b === 168) ||              // 192.168.0.0/16
+        a === 127 ||                             // 127.0.0.0/8 loopback
+        (a === 169 && b === 254) ||              // 169.254.0.0/16 link-local
+        (a === 100 && b >= 64 && b <= 127) ||    // 100.64.0.0/10 shared
+        a === 0;                                 // 0.0.0.0/8
+      if (isPrivate) {
+        throw new Error(
+          `Webhook URL targets a private or reserved IP address (${hostname}). ` +
+          'Only publicly routable HTTPS endpoints are permitted.'
+        );
+      }
+    }
+  }
+
+  /**
+   * Call the QuickBase legacy XML API.
+   *
+   * The legacy API lives at `https://{realm}/db/{tableId}?a={action}` — a completely
+   * different hostname and path from the REST API at `https://api.quickbase.com/v1`.
+   * Authentication is supplied via `<usertoken>` inside the XML body.
+   *
+   * @param tableId - The QuickBase table ID (dbid).
+   * @param action  - The XML API action name, e.g. `API_Webhooks_Create`.
+   * @param inner   - Additional XML elements to embed after `<usertoken>`.
+   * @returns Parsed response data from QuickBase.
+   */
+  private async callLegacyXmlApi(tableId: string, action: string, inner = ''): Promise<any> {
+    const url = `https://${this.config.realm}/db/${tableId}?a=${action}`;
+    const body = this.buildXmlBody(
+      `\n  <usertoken>${this.escapeXml(this.config.userToken)}</usertoken>${inner}`
+    );
+    const response = await axios.post(url, body, {
+      headers: { 'Content-Type': 'application/xml' },
+      timeout: this.config.timeout
+    });
+    return response.data;
+  }
+
+  /**
+   * Wrap inner XML elements in a standard QuickBase XML API request envelope.
+   * @param inner - XML element strings to embed inside `<qdbapi>`. Defaults to empty.
+   */
+  private buildXmlBody(inner = ''): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<qdbapi>${inner}\n</qdbapi>`;
+  }
 
   private escapeXml(str: string): string {
     return String(str)
