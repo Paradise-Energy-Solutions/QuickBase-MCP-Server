@@ -636,6 +636,18 @@ export class QuickBaseClient {
   /**
    * Upsert (insert-or-update) multiple records using a common key field.
    *
+   * ⚠️  **Breaking change from prior API**: the previous signature accepted
+   * per-record `keyField` properties inside each record object:
+   * ```
+   * upsertRecords(tableId, [{ keyField: 4, keyValue: 'x', data: {...} }])
+   * ```
+   * This was redesigned because QuickBase requires **one** merge field for the
+   * entire batch; per-record merge fields are not supported by the API.  The
+   * new signature is:
+   * ```
+   * upsertRecords(tableId, 4, [{ keyValue: 'x', data: {...} }])
+   * ```
+   *
    * @param tableId      - Target table ID.
    * @param mergeFieldId - Field ID used as the upsert key for **all** records in this batch.
    *   All records must share the same merge field; QuickBase does not support per-record
@@ -821,6 +833,10 @@ export class QuickBaseClient {
       inner += `\n  <messageSubject>${this.escapeXml(notification.messageSubject)}</messageSubject>`;
       inner += `\n  <messageBody>${this.escapeXml(notification.messageBody)}</messageBody>`;
 
+      if (notification.includeAllFields) {
+        inner += `\n  <includeAllFields>TRUE</includeAllFields>`;
+      }
+
       if (notification.triggerFields && notification.triggerFields.length > 0) {
         inner += `\n  <tfidsWhich>TRUE</tfidsWhich>`;
         notification.triggerFields.forEach(fieldId => {
@@ -875,7 +891,17 @@ export class QuickBaseClient {
   /**
    * Validate that a webhook URL is safe to call (SSRF prevention).
    * Rules: must use HTTPS; must not target localhost, loopback, or any
-   * RFC-1918 / link-local / shared-address IPv4 range.
+   * RFC-1918 / link-local / shared-address IPv4 range, or any private/
+   * reserved IPv6 range.
+   *
+   * ⚠️  DNS-rebinding limitation: this validation checks the URL text at
+   * call time. It cannot defend against an attacker who initially resolves
+   * a domain to a public IP, passes validation, and then changes their DNS
+   * to redirect subsequent requests to a private address. This is an inherent
+   * limitation of URL-based pre-flight validation. Full protection would
+   * require resolving the hostname and re-checking the resulting IP just
+   * before every HTTP request, which is outside the scope of this
+   * implementation.
    *
    * @throws {Error} if the URL fails any validation check.
    */
@@ -911,6 +937,20 @@ export class QuickBaseClient {
       if (isPrivate) {
         throw new Error(
           `Webhook URL targets a private or reserved IP address (${hostname}). ` +
+          'Only publicly routable HTTPS endpoints are permitted.'
+        );
+      }
+    }
+
+    // IPv6 private/reserved range checks (the ::1 loopback is already handled above).
+    if (hostname.includes(':')) {
+      const isPrivateIPv6 =
+        hostname === '::' ||                   // unspecified address
+        /^fe[89ab]/i.test(hostname) ||         // fe80::/10 link-local (fe80–febf)
+        /^f[cd]/i.test(hostname);              // fc00::/7 unique-local (fc00–fdff)
+      if (isPrivateIPv6) {
+        throw new Error(
+          `Webhook URL targets a private or reserved IPv6 address (${hostname}). ` +
           'Only publicly routable HTTPS endpoints are permitted.'
         );
       }

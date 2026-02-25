@@ -209,7 +209,10 @@ const CreateWebhookSchema = z.object({
   tableId: z.string().min(3).max(64).describe('Table ID'),
   label: z.string().min(1).max(128).describe('Unique name for the webhook'),
   description: z.string().max(1024).optional().describe('Webhook description'),
-  webhookUrl: z.string().url().describe('HTTPS endpoint URL for the webhook'),
+  webhookUrl: z.string()
+    .url()
+    .refine(val => val.startsWith('https://'), { message: 'Webhook URL must use the HTTPS scheme' })
+    .describe('HTTPS endpoint URL for the webhook'),
   webhookEvents: z.string()
     .refine(val => /^[adm]+$/.test(val))
     .describe('Trigger events: a (add), d (delete), m (modify) - combine as needed (e.g., "amd")'),
@@ -230,7 +233,10 @@ const DeleteWebhookSchema = z.object({
 });
 
 const TestWebhookSchema = z.object({
-  webhookUrl: z.string().url().describe('Webhook URL to test'),
+  webhookUrl: z.string()
+    .url()
+    .refine(url => url.startsWith('https://'), { message: 'Webhook URL must use the HTTPS scheme' })
+    .describe('HTTPS webhook URL to test'),
   testPayload: z.record(z.any()).describe('Test payload to send'),
   headers: z.record(z.string()).optional().describe('Optional custom headers')
 });
