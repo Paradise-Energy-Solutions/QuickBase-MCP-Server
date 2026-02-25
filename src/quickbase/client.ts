@@ -51,10 +51,14 @@ export class QuickBaseClient {
       headers: {
         'QB-Realm-Hostname': config.realm,
         'User-Agent': 'QuickBase-MCP-Server/1.0.0',
-        'Authorization': `QB-USER-TOKEN ${config.userToken}`,
-        'Content-Type': 'application/json'
+        'Authorization': `QB-USER-TOKEN ${config.userToken}`
       }
     });
+    // Set Content-Type only for requests that carry a body — GET/HEAD/DELETE
+    // requests must NOT send Content-Type or QuickBase returns HTTP 415.
+    this.axios.defaults.headers.post['Content-Type'] = 'application/json';
+    this.axios.defaults.headers.put['Content-Type'] = 'application/json';
+    this.axios.defaults.headers.patch['Content-Type'] = 'application/json';
 
     // Add request/response interceptors for logging and error handling
     this.axios.interceptors.request.use(
