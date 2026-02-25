@@ -684,8 +684,34 @@ export class QuickBaseClient {
 
   async listWebhooks(tableId: string): Promise<any[]> {
     try {
-      const response = await this.axios.get(`/tables/${tableId}/webhooks`);
-      return response.data.webhooks || response.data || [];
+      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<qdbapi>
+</qdbapi>`;
+
+      const response = await this.axios.post(
+        `/tables/${tableId}?a=API_GetWebhooks`,
+        xmlBody,
+        {
+          headers: {
+            'Content-Type': 'application/xml'
+          }
+        }
+      );
+
+      // Handle response - may be JSON or XML depending on QuickBase API version
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+      
+      if (response.data?.webhooks && Array.isArray(response.data.webhooks)) {
+        return response.data.webhooks;
+      }
+      
+      if (response.data && typeof response.data === 'object') {
+        return response.data;
+      }
+      
+      return [];
     } catch (error) {
       console.error(`Error listing webhooks: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
@@ -694,7 +720,20 @@ export class QuickBaseClient {
 
   async getWebhook(tableId: string, webhookId: string): Promise<any> {
     try {
-      const response = await this.axios.get(`/tables/${tableId}/webhooks/${webhookId}`);
+      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<qdbapi>
+  <webhookId>${this.escapeXml(webhookId)}</webhookId>
+</qdbapi>`;
+
+      const response = await this.axios.post(
+        `/tables/${tableId}?a=API_GetWebhook`,
+        xmlBody,
+        {
+          headers: {
+            'Content-Type': 'application/xml'
+          }
+        }
+      );
       return response.data;
     } catch (error) {
       console.error(`Error getting webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
@@ -704,7 +743,20 @@ export class QuickBaseClient {
 
   async deleteWebhook(tableId: string, webhookId: string): Promise<void> {
     try {
-      await this.axios.delete(`/tables/${tableId}/webhooks/${webhookId}`);
+      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<qdbapi>
+  <webhookId>${this.escapeXml(webhookId)}</webhookId>
+</qdbapi>`;
+
+      await this.axios.post(
+        `/tables/${tableId}?a=API_Webhooks_Delete`,
+        xmlBody,
+        {
+          headers: {
+            'Content-Type': 'application/xml'
+          }
+        }
+      );
     } catch (error) {
       console.error(`Error deleting webhook: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
@@ -791,8 +843,34 @@ export class QuickBaseClient {
 
   async listNotifications(tableId: string): Promise<any[]> {
     try {
-      const response = await this.axios.get(`/tables/${tableId}/notifications`);
-      return response.data.notifications || response.data || [];
+      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<qdbapi>
+</qdbapi>`;
+
+      const response = await this.axios.post(
+        `/tables/${tableId}?a=API_GetNotifications`,
+        xmlBody,
+        {
+          headers: {
+            'Content-Type': 'application/xml'
+          }
+        }
+      );
+
+      // Handle response - may be JSON or XML depending on QuickBase API version
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+      
+      if (response.data?.notifications && Array.isArray(response.data.notifications)) {
+        return response.data.notifications;
+      }
+      
+      if (response.data && typeof response.data === 'object') {
+        return response.data;
+      }
+      
+      return [];
     } catch (error) {
       console.error(`Error listing notifications: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
@@ -801,7 +879,20 @@ export class QuickBaseClient {
 
   async deleteNotification(tableId: string, notificationId: string): Promise<void> {
     try {
-      await this.axios.delete(`/tables/${tableId}/notifications/${notificationId}`);
+      const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<qdbapi>
+  <notificationId>${this.escapeXml(notificationId)}</notificationId>
+</qdbapi>`;
+
+      await this.axios.post(
+        `/tables/${tableId}?a=API_DeleteNotification`,
+        xmlBody,
+        {
+          headers: {
+            'Content-Type': 'application/xml'
+          }
+        }
+      );
     } catch (error) {
       console.error(`Error deleting notification: ${QuickBaseClient.formatErrorForLog(error)}`);
       throw error;
