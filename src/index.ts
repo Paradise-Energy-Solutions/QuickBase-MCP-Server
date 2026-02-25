@@ -26,23 +26,20 @@ import {
   CreateLookupFieldSchema,
   ValidateRelationshipSchema,
   CreateJunctionTableSchema,
-  GetRelationshipDetailsSchema
+  GetRelationshipDetailsSchema,
+  CreateWebhookSchema,
+  ListWebhooksSchema,
+  DeleteWebhookSchema,
+  TestWebhookSchema,
+  CreateNotificationSchema,
+  ListNotificationsSchema,
+  DeleteNotificationSchema
 } from './tools/index.js';
 import { QuickBaseConfig } from './types/quickbase.js';
 import { envFlag, loadDotenv } from './utils/env.js';
+import { formatErrorForLog } from './utils/errors.js';
 import { assertToolAllowed } from './utils/toolGuards.js';
 import { z } from 'zod';
-
-function formatErrorForLog(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  try {
-    return typeof error === 'string' ? error : JSON.stringify(error);
-  } catch {
-    return 'Unknown error';
-  }
-}
 
 function parseArgs<T>(toolName: string, schema: { parse: (input: unknown) => T }, args: unknown): T {
   try {
@@ -84,20 +81,31 @@ const RunReportArgsSchema = z.object({
 // Load environment variables
 loadDotenv(import.meta.url);
 
+/**
+ * Parse an environment variable as a positive integer.
+ * Falls back to `defaultValue` when the variable is absent, non-numeric, or non-positive.
+ */
+function parseEnvInt(name: string, defaultValue: number): number {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : defaultValue;
+}
+
 class QuickBaseMCPServer {
   private server: Server;
   private qbClient: QuickBaseClient;
   private allowDestructive: boolean;
   private readOnly: boolean;
+  private readonly serverName: string;
+  private readonly serverVersion: string;
 
   constructor() {
     // Validate environment variables
     const config: QuickBaseConfig = {
-      realm: process.env.QB_REALM || '',
-      userToken: process.env.QB_USER_TOKEN || '',
-      appId: process.env.QB_APP_ID || '',
-      timeout: parseInt(process.env.QB_DEFAULT_TIMEOUT || '30000'),
-      maxRetries: parseInt(process.env.QB_MAX_RETRIES || '3')
+      realm: (process.env.QB_REALM ?? '').trim(),
+      userToken: (process.env.QB_USER_TOKEN ?? '').trim(),
+      appId: (process.env.QB_APP_ID ?? '').trim(),
+      timeout: parseEnvInt('QB_DEFAULT_TIMEOUT', 30_000),
+      maxRetries: parseEnvInt('QB_MAX_RETRIES', 3)
     };
 
     if (!config.realm || !config.userToken || !config.appId) {
@@ -106,12 +114,14 @@ class QuickBaseMCPServer {
 
     this.allowDestructive = envFlag('QB_ALLOW_DESTRUCTIVE', false);
     this.readOnly = envFlag('QB_READONLY', false);
+    this.serverName = process.env.MCP_SERVER_NAME || 'quickbase-mcp';
+    this.serverVersion = process.env.MCP_SERVER_VERSION || '1.0.0';
 
     this.qbClient = new QuickBaseClient(config);
     this.server = new Server(
       {
-        name: process.env.MCP_SERVER_NAME || 'quickbase-mcp',
-        version: process.env.MCP_SERVER_VERSION || '1.0.0',
+        name: this.serverName,
+        version: this.serverVersion,
       },
       {
         capabilities: {
@@ -124,31 +134,20 @@ class QuickBaseMCPServer {
   }
 
   private setupHandlers() {
-    // Initialize the server and declare capabilities
-    this.server.setRequestHandler(InitializeRequestSchema, async () => {
-      return {
-        protocolVersion: '2024-11-05',
-        capabilities: {
-          tools: {},
-        },
-        serverInfo: {
-          name: process.env.MCP_SERVER_NAME || 'quickbase-mcp',
-          version: process.env.MCP_SERVER_VERSION || '1.0.0',
-        },
-      };
-    });
+    this.server.setRequestHandler(InitializeRequestSchema, async () => ({
+      protocolVersion: '2024-11-05',
+      capabilities: { tools: {} },
+      serverInfo: { name: this.serverName, version: this.serverVersion },
+    }));
 
-    // List available tools
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: quickbaseTools,
-      };
-    });
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: quickbaseTools,
+    }));
 
-    // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+    const toolHandlers = this.buildToolHandlers();
+
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-
       try {
         assertToolAllowed({
           name,
@@ -157,372 +156,18 @@ class QuickBaseMCPServer {
           allowDestructive: this.allowDestructive
         });
 
-        switch (name) {
-          // ========== APPLICATION TOOLS ==========
-          case 'quickbase_get_app_info':
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(await this.qbClient.getAppInfo(), null, 2),
-                },
-              ],
-            };
-
-          case 'quickbase_get_tables':
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(await this.qbClient.getAppTables(), null, 2),
-                },
-              ],
-            };
-
-          case 'quickbase_test_connection':
-            const isConnected = await this.qbClient.testConnection();
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Connection ${isConnected ? 'successful' : 'failed'}`,
-                },
-              ],
-            };
-
-          // ========== TABLE TOOLS ==========
-          case 'quickbase_create_table':
-            const createTableArgs = parseArgs('quickbase_create_table', CreateTableSchema, args);
-            const tableId = await this.qbClient.createTable({
-              name: createTableArgs.name,
-              description: createTableArgs.description
-            });
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Table created with ID: ${tableId}`,
-                },
-              ],
-            };
-
-          case 'quickbase_get_table_info':
-            const tableIdArgs = parseArgs('quickbase_get_table_info', TableIdSchema, args);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(await this.qbClient.getTableInfo(tableIdArgs.tableId), null, 2),
-                },
-              ],
-            };
-
-          case 'quickbase_delete_table':
-            const deleteTableArgs = parseArgs('quickbase_delete_table', TableIdSchema, args);
-            await this.qbClient.deleteTable(deleteTableArgs.tableId);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Table ${deleteTableArgs.tableId} deleted successfully`,
-                },
-              ],
-            };
-
-          // ========== FIELD TOOLS ==========
-          case 'quickbase_get_table_fields':
-            const getFieldsArgs = parseArgs('quickbase_get_table_fields', TableIdSchema, args);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(await this.qbClient.getTableFields(getFieldsArgs.tableId), null, 2),
-                },
-              ],
-            };
-
-          case 'quickbase_create_field':
-            const createFieldArgs = parseArgs('quickbase_create_field', CreateFieldSchema, args);
-            const fieldId = await this.qbClient.createField(createFieldArgs.tableId, {
-              label: createFieldArgs.label,
-              fieldType: createFieldArgs.fieldType as any,
-              required: createFieldArgs.required,
-              unique: createFieldArgs.unique,
-              choices: createFieldArgs.choices,
-              formula: createFieldArgs.formula,
-              lookupReference: createFieldArgs.lookupTableId ? {
-                tableId: createFieldArgs.lookupTableId,
-                fieldId: createFieldArgs.lookupFieldId as number
-              } : undefined
-            });
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Field created with ID: ${fieldId}`,
-                },
-              ],
-            };
-
-          case 'quickbase_update_field':
-            const updateFieldArgs = parseArgs('quickbase_update_field', UpdateFieldArgsSchema, args);
-            await this.qbClient.updateField(updateFieldArgs.tableId, updateFieldArgs.fieldId, {
-              label: updateFieldArgs.label,
-              required: updateFieldArgs.required,
-              choices: updateFieldArgs.choices
-            });
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Field ${updateFieldArgs.fieldId} updated successfully`,
-                },
-              ],
-            };
-
-          case 'quickbase_delete_field':
-            const deleteFieldArgs = parseArgs('quickbase_delete_field', DeleteFieldArgsSchema, args);
-            await this.qbClient.deleteField(deleteFieldArgs.tableId, deleteFieldArgs.fieldId);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Field ${deleteFieldArgs.fieldId} deleted successfully`,
-                },
-              ],
-            };
-
-          // ========== RECORD TOOLS ==========
-          case 'quickbase_query_records':
-            const queryArgs = parseArgs('quickbase_query_records', QueryRecordsSchema, args);
-            const records = await this.qbClient.getRecords(queryArgs.tableId, {
-              select: queryArgs.select,
-              where: queryArgs.where,
-              sortBy: queryArgs.sortBy as any[],
-              top: queryArgs.top,
-              skip: queryArgs.skip
-            });
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(records, null, 2),
-                },
-              ],
-            };
-
-          case 'quickbase_get_record':
-            const getRecordArgs = parseArgs('quickbase_get_record', GetRecordArgsSchema, args);
-            const record = await this.qbClient.getRecord(getRecordArgs.tableId, getRecordArgs.recordId, getRecordArgs.fieldIds);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(record, null, 2),
-                },
-              ],
-            };
-
-          case 'quickbase_create_record':
-            const createRecordArgs = parseArgs('quickbase_create_record', CreateRecordSchema, args);
-            const newRecordId = await this.qbClient.createRecord(createRecordArgs.tableId, {
-              fields: createRecordArgs.fields as Record<string, any>
-            });
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: newRecordId === null
-                    ? 'Record created successfully (Record ID not returned by QuickBase API response)'
-                    : `Record created with ID: ${newRecordId}`,
-                },
-              ],
-            };
-
-          case 'quickbase_update_record':
-            const updateRecordArgs = parseArgs('quickbase_update_record', UpdateRecordSchema, args);
-            await this.qbClient.updateRecord(updateRecordArgs.tableId, updateRecordArgs.recordId, updateRecordArgs.fields as Record<string, any>);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Record ${updateRecordArgs.recordId} updated successfully`,
-                },
-              ],
-            };
-
-          case 'quickbase_delete_record':
-            const deleteRecordArgs = parseArgs('quickbase_delete_record', RecordIdSchema, args);
-            await this.qbClient.deleteRecord(deleteRecordArgs.tableId, deleteRecordArgs.recordId);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Record ${deleteRecordArgs.recordId} deleted successfully`,
-                },
-              ],
-            };
-
-          case 'quickbase_bulk_create_records':
-            const bulkCreateArgs = parseArgs('quickbase_bulk_create_records', BulkCreateSchema, args);
-            const recordIds = await this.qbClient.createRecords(
-              bulkCreateArgs.tableId,
-              bulkCreateArgs.records as any[]
-            );
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: recordIds.length === 0
-                    ? 'Records created successfully (Record IDs not returned by QuickBase API response)'
-                    : `Created ${recordIds.length} records: ${recordIds.join(', ')}`,
-                },
-              ],
-            };
-
-          case 'quickbase_search_records':
-            const searchArgs = parseArgs('quickbase_search_records', SearchRecordsSchema, args);
-            const searchResults = await this.qbClient.searchRecords(
-              searchArgs.tableId,
-              searchArgs.searchTerm,
-              searchArgs.fieldIds
-            );
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(searchResults, null, 2),
-                },
-              ],
-            };
-
-          // ========== RELATIONSHIP TOOLS ==========
-          case 'quickbase_create_relationship':
-            const createRelationshipArgs = parseArgs('quickbase_create_relationship', CreateRelationshipSchema, args);
-            await this.qbClient.createRelationship(
-              createRelationshipArgs.parentTableId,
-              createRelationshipArgs.childTableId,
-              createRelationshipArgs.foreignKeyFieldId
-            );
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Relationship created between ${createRelationshipArgs.parentTableId} and ${createRelationshipArgs.childTableId}`,
-                },
-              ],
-            };
-
-          case 'quickbase_get_relationships':
-            const relationshipsArgs = parseArgs('quickbase_get_relationships', TableIdSchema, args);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(await this.qbClient.getRelationships(relationshipsArgs.tableId), null, 2),
-                },
-              ],
-            };
-
-          // ========== UTILITY TOOLS ==========
-          case 'quickbase_get_reports':
-            const reportsArgs = parseArgs('quickbase_get_reports', TableIdSchema, args);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(await this.qbClient.getReports(reportsArgs.tableId), null, 2),
-                },
-              ],
-            };
-
-          case 'quickbase_run_report':
-            const runReportArgs = parseArgs('quickbase_run_report', RunReportArgsSchema, args);
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(
-                    await this.qbClient.runReport(runReportArgs.reportId as string, runReportArgs.tableId), 
-                    null, 
-                    2
-                  ),
-                },
-              ],
-            };
-
-          // ========== ENHANCED RELATIONSHIP TOOLS ==========
-          case 'quickbase_create_advanced_relationship':
-            const advRelArgs = parseArgs('quickbase_create_advanced_relationship', CreateAdvancedRelationshipSchema, args);
-            const advResult = await this.qbClient.createAdvancedRelationship(
-              advRelArgs.parentTableId,
-              advRelArgs.childTableId,
-              advRelArgs.referenceFieldLabel,
-              advRelArgs.lookupFields,
-              advRelArgs.relationshipType as any
-            );
-            return {
-              content: [{ type: 'text', text: JSON.stringify(advResult, null, 2) }]
-            };
-
-          case 'quickbase_create_lookup_field':
-            const lookupArgs = parseArgs('quickbase_create_lookup_field', CreateLookupFieldSchema, args);
-            const lookupFieldId = await this.qbClient.createLookupField(
-              lookupArgs.childTableId,
-              lookupArgs.parentTableId,
-              lookupArgs.referenceFieldId,
-              lookupArgs.parentFieldId,
-              lookupArgs.lookupFieldLabel
-            );
-            return {
-              content: [{ type: 'text', text: `Lookup field created with ID: ${lookupFieldId}` }]
-            };
-
-          case 'quickbase_validate_relationship':
-            const validateArgs = parseArgs('quickbase_validate_relationship', ValidateRelationshipSchema, args);
-            const validationResult = await this.qbClient.validateRelationship(
-              validateArgs.parentTableId,
-              validateArgs.childTableId,
-              validateArgs.foreignKeyFieldId
-            );
-            return {
-              content: [{ type: 'text', text: JSON.stringify(validationResult, null, 2) }]
-            };
-
-          case 'quickbase_get_relationship_details':
-            const detailsArgs = parseArgs('quickbase_get_relationship_details', GetRelationshipDetailsSchema, args);
-            const detailsResult = await this.qbClient.getRelationshipDetails(
-              detailsArgs.tableId,
-              detailsArgs.includeFields
-            );
-            return {
-              content: [{ type: 'text', text: JSON.stringify(detailsResult, null, 2) }]
-            };
-
-          case 'quickbase_create_junction_table':
-            const junctionArgs = parseArgs('quickbase_create_junction_table', CreateJunctionTableSchema, args);
-            const junctionResult = await this.qbClient.createJunctionTable(
-              junctionArgs.junctionTableName,
-              junctionArgs.table1Id,
-              junctionArgs.table2Id,
-              junctionArgs.table1FieldLabel,
-              junctionArgs.table2FieldLabel,
-              junctionArgs.additionalFields
-            );
-            return {
-              content: [{ type: 'text', text: JSON.stringify(junctionResult, null, 2) }]
-            };
-
-          default:
-            throw new McpError(
-              ErrorCode.MethodNotFound,
-              `Unknown tool: ${name}`
-            );
+        const handler = toolHandlers[name];
+        if (!handler) {
+          throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
+
+        return { content: [{ type: 'text' as const, text: await handler(args) }] };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        // Preserve the original error code for McpErrors (e.g. InvalidRequest from assertToolAllowed).
+        if (error instanceof McpError) throw error;
+
         console.error(`Error executing tool ${name}: ${formatErrorForLog(error)}`);
-        
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         throw new McpError(
           ErrorCode.InternalError,
           `Error executing ${name}: ${errorMessage}`
@@ -530,6 +175,275 @@ class QuickBaseMCPServer {
       }
     });
   }
+
+  /** Build a map of tool name → handler function. Each handler receives raw args and returns a text string. */
+  private buildToolHandlers(): Record<string, (args: unknown) => Promise<string>> {
+    const qb = this.qbClient;
+    return {
+      // ========== APPLICATION ==========
+      quickbase_get_app_info: async () =>
+        JSON.stringify(await qb.getAppInfo(), null, 2),
+
+      quickbase_get_tables: async () =>
+        JSON.stringify(await qb.getAppTables(), null, 2),
+
+      quickbase_test_connection: async () => {
+        const ok = await qb.testConnection();
+        return `Connection ${ok ? 'successful' : 'failed'}`;
+      },
+
+      // ========== TABLES ==========
+      quickbase_create_table: async (args) => {
+        const a = parseArgs('quickbase_create_table', CreateTableSchema, args);
+        const tableId = await qb.createTable({ name: a.name, description: a.description });
+        return `Table created with ID: ${tableId}`;
+      },
+
+      quickbase_get_table_info: async (args) => {
+        const a = parseArgs('quickbase_get_table_info', TableIdSchema, args);
+        return JSON.stringify(await qb.getTableInfo(a.tableId), null, 2);
+      },
+
+      quickbase_delete_table: async (args) => {
+        const a = parseArgs('quickbase_delete_table', TableIdSchema, args);
+        await qb.deleteTable(a.tableId);
+        return `Table ${a.tableId} deleted successfully`;
+      },
+
+      // ========== FIELDS ==========
+      quickbase_get_table_fields: async (args) => {
+        const a = parseArgs('quickbase_get_table_fields', TableIdSchema, args);
+        return JSON.stringify(await qb.getTableFields(a.tableId), null, 2);
+      },
+
+      quickbase_create_field: async (args) => {
+        const a = parseArgs('quickbase_create_field', CreateFieldSchema, args);
+        const fieldId = await qb.createField(a.tableId, {
+          label: a.label,
+          fieldType: a.fieldType as any,
+          required: a.required,
+          unique: a.unique,
+          choices: a.choices,
+          formula: a.formula,
+          lookupReference: a.lookupTableId
+            ? { tableId: a.lookupTableId, fieldId: a.lookupFieldId as number }
+            : undefined
+        });
+        return `Field created with ID: ${fieldId}`;
+      },
+
+      quickbase_update_field: async (args) => {
+        const a = parseArgs('quickbase_update_field', UpdateFieldArgsSchema, args);
+        await qb.updateField(a.tableId, a.fieldId, {
+          label: a.label,
+          required: a.required,
+          choices: a.choices
+        });
+        return `Field ${a.fieldId} updated successfully`;
+      },
+
+      quickbase_delete_field: async (args) => {
+        const a = parseArgs('quickbase_delete_field', DeleteFieldArgsSchema, args);
+        await qb.deleteField(a.tableId, a.fieldId);
+        return `Field ${a.fieldId} deleted successfully`;
+      },
+
+      // ========== RECORDS ==========
+      quickbase_query_records: async (args) => {
+        const a = parseArgs('quickbase_query_records', QueryRecordsSchema, args);
+        const records = await qb.getRecords(a.tableId, {
+          select: a.select,
+          where: a.where,
+          sortBy: a.sortBy as any[],
+          top: a.top,
+          skip: a.skip
+        });
+        return JSON.stringify(records, null, 2);
+      },
+
+      quickbase_get_record: async (args) => {
+        const a = parseArgs('quickbase_get_record', GetRecordArgsSchema, args);
+        return JSON.stringify(await qb.getRecord(a.tableId, a.recordId, a.fieldIds), null, 2);
+      },
+
+      quickbase_create_record: async (args) => {
+        const a = parseArgs('quickbase_create_record', CreateRecordSchema, args);
+        const newRecordId = await qb.createRecord(a.tableId, {
+          fields: a.fields as Record<string, any>
+        });
+        return newRecordId === null
+          ? 'Record created successfully (Record ID not returned by QuickBase API response)'
+          : `Record created with ID: ${newRecordId}`;
+      },
+
+      quickbase_update_record: async (args) => {
+        const a = parseArgs('quickbase_update_record', UpdateRecordSchema, args);
+        await qb.updateRecord(a.tableId, a.recordId, a.fields as Record<string, any>);
+        return `Record ${a.recordId} updated successfully`;
+      },
+
+      quickbase_delete_record: async (args) => {
+        const a = parseArgs('quickbase_delete_record', RecordIdSchema, args);
+        await qb.deleteRecord(a.tableId, a.recordId);
+        return `Record ${a.recordId} deleted successfully`;
+      },
+
+      quickbase_bulk_create_records: async (args) => {
+        const a = parseArgs('quickbase_bulk_create_records', BulkCreateSchema, args);
+        const recordIds = await qb.createRecords(a.tableId, a.records as any[]);
+        return recordIds.length === 0
+          ? 'Records created successfully (Record IDs not returned by QuickBase API response)'
+          : `Created ${recordIds.length} records: ${recordIds.join(', ')}`;
+      },
+
+      quickbase_search_records: async (args) => {
+        const a = parseArgs('quickbase_search_records', SearchRecordsSchema, args);
+        return JSON.stringify(
+          await qb.searchRecords(a.tableId, a.searchTerm, a.fieldIds),
+          null, 2
+        );
+      },
+
+      // ========== RELATIONSHIPS ==========
+      quickbase_create_relationship: async (args) => {
+        const a = parseArgs('quickbase_create_relationship', CreateRelationshipSchema, args);
+        await qb.createRelationship(a.parentTableId, a.childTableId, a.foreignKeyFieldId);
+        return `Relationship created between ${a.parentTableId} and ${a.childTableId}`;
+      },
+
+      quickbase_get_relationships: async (args) => {
+        const a = parseArgs('quickbase_get_relationships', TableIdSchema, args);
+        return JSON.stringify(await qb.getRelationships(a.tableId), null, 2);
+      },
+
+      // ========== REPORTS ==========
+      quickbase_get_reports: async (args) => {
+        const a = parseArgs('quickbase_get_reports', TableIdSchema, args);
+        return JSON.stringify(await qb.getReports(a.tableId), null, 2);
+      },
+
+      quickbase_run_report: async (args) => {
+        const a = parseArgs('quickbase_run_report', RunReportArgsSchema, args);
+        return JSON.stringify(await qb.runReport(a.reportId as string, a.tableId), null, 2);
+      },
+
+      // ========== ENHANCED RELATIONSHIPS ==========
+      quickbase_create_advanced_relationship: async (args) => {
+        const a = parseArgs('quickbase_create_advanced_relationship', CreateAdvancedRelationshipSchema, args);
+        return JSON.stringify(
+          await qb.createAdvancedRelationship(
+            a.parentTableId, a.childTableId, a.referenceFieldLabel,
+            a.lookupFields, a.relationshipType as any
+          ),
+          null, 2
+        );
+      },
+
+      quickbase_create_lookup_field: async (args) => {
+        const a = parseArgs('quickbase_create_lookup_field', CreateLookupFieldSchema, args);
+        const lookupFieldId = await qb.createLookupField(
+          a.childTableId, a.parentTableId, a.referenceFieldId, a.parentFieldId, a.lookupFieldLabel
+        );
+        return `Lookup field created with ID: ${lookupFieldId}`;
+      },
+
+      quickbase_validate_relationship: async (args) => {
+        const a = parseArgs('quickbase_validate_relationship', ValidateRelationshipSchema, args);
+        return JSON.stringify(
+          await qb.validateRelationship(a.parentTableId, a.childTableId, a.foreignKeyFieldId),
+          null, 2
+        );
+      },
+
+      quickbase_get_relationship_details: async (args) => {
+        const a = parseArgs('quickbase_get_relationship_details', GetRelationshipDetailsSchema, args);
+        return JSON.stringify(await qb.getRelationshipDetails(a.tableId, a.includeFields), null, 2);
+      },
+
+      quickbase_create_junction_table: async (args) => {
+        const a = parseArgs('quickbase_create_junction_table', CreateJunctionTableSchema, args);
+        return JSON.stringify(
+          await qb.createJunctionTable(
+            a.junctionTableName, a.table1Id, a.table2Id,
+            a.table1FieldLabel, a.table2FieldLabel, a.additionalFields
+          ),
+          null, 2
+        );
+      },
+
+      // ========== WEBHOOKS ==========
+      quickbase_create_webhook: async (args) => {
+        const a = parseArgs('quickbase_create_webhook', CreateWebhookSchema, args);
+        const webhookId = await qb.createWebhook(a.tableId, {
+          label: a.label,
+          description: a.description,
+          webhookUrl: a.webhookUrl,
+          webhookEvents: a.webhookEvents,
+          messageFormat: a.messageFormat,
+          messageBody: a.messageBody,
+          webhookHeaders: a.webhookHeaders,
+          httpMethod: a.httpMethod,
+          triggerFields: a.triggerFields
+        });
+        return JSON.stringify({
+          success: true, webhookId,
+          message: `Webhook "${a.label}" created successfully`
+        }, null, 2);
+      },
+
+      quickbase_list_webhooks: async (args) => {
+        const a = parseArgs('quickbase_list_webhooks', ListWebhooksSchema, args);
+        const webhooks = await qb.listWebhooks(a.tableId);
+        return JSON.stringify({ success: true, tableId: a.tableId, webhooks, count: webhooks.length }, null, 2);
+      },
+
+      quickbase_delete_webhook: async (args) => {
+        const a = parseArgs('quickbase_delete_webhook', DeleteWebhookSchema, args);
+        await qb.deleteWebhook(a.tableId, a.webhookId);
+        return JSON.stringify({ success: true, message: `Webhook ${a.webhookId} deleted successfully` }, null, 2);
+      },
+
+      quickbase_test_webhook: async (args) => {
+        const a = parseArgs('quickbase_test_webhook', TestWebhookSchema, args);
+        return JSON.stringify(
+          await qb.testWebhook(a.webhookUrl, a.testPayload, a.headers),
+          null, 2
+        );
+      },
+
+      // ========== NOTIFICATIONS ==========
+      quickbase_create_notification: async (args) => {
+        const a = parseArgs('quickbase_create_notification', CreateNotificationSchema, args);
+        const notificationId = await qb.createNotification(a.tableId, {
+          label: a.label,
+          description: a.description,
+          notificationEvent: a.notificationEvent,
+          recipientEmail: a.recipientEmail,
+          messageSubject: a.messageSubject,
+          messageBody: a.messageBody,
+          includeAllFields: a.includeAllFields,
+          triggerFields: a.triggerFields
+        });
+        return JSON.stringify({
+          success: true, notificationId,
+          message: `Notification "${a.label}" created successfully`
+        }, null, 2);
+      },
+
+      quickbase_list_notifications: async (args) => {
+        const a = parseArgs('quickbase_list_notifications', ListNotificationsSchema, args);
+        const notifications = await qb.listNotifications(a.tableId);
+        return JSON.stringify({ success: true, tableId: a.tableId, notifications, count: notifications.length }, null, 2);
+      },
+
+      quickbase_delete_notification: async (args) => {
+        const a = parseArgs('quickbase_delete_notification', DeleteNotificationSchema, args);
+        await qb.deleteNotification(a.tableId, a.notificationId);
+        return JSON.stringify({ success: true, message: `Notification ${a.notificationId} deleted successfully` }, null, 2);
+      },
+    };
+  }
+
 
   async run() {
     const transport = new StdioServerTransport();

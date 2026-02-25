@@ -31,6 +31,13 @@ describe('QuickBaseClient - Advanced Methods', () => {
         response: {
           use: jest.fn((success, error) => {})
         }
+      },
+      defaults: {
+        headers: {
+          post: {},
+          put: {},
+          patch: {}
+        }
       }
     };
 

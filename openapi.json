@@ -1,0 +1,9 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Quickbase API",
+    "version": "1.0.0",
+    "description": "OpenAPI 3 specification reference for the Quickbase REST API.\n\nThe authoritative, up-to-date spec is available at https://developer.quickbase.com/operation — this file is a local stub for repository reference only.\n\nNote: Webhook and notification operations are not part of the Quickbase REST API.  They are implemented via the Quickbase legacy XML API (https://{realm}/db/{tableId}?a=API_Webhooks_Create, etc.)."
+  },
+  "paths": {}
+}
