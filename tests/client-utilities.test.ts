@@ -31,6 +31,13 @@ describe('QuickBaseClient - Utility and Advanced Methods', () => {
         response: {
           use: jest.fn((success, error) => {})
         }
+      },
+      defaults: {
+        headers: {
+          post: {},
+          put: {},
+          patch: {}
+        }
       }
     };
 
@@ -180,8 +187,8 @@ describe('QuickBaseClient - Utility and Advanced Methods', () => {
       it('should upsert records with key field', async () => {
         mockAxiosInstance.post.mockResolvedValue({ data: { data: [] } });
 
-        await client.upsertRecords('bux123', [
-          { keyField: 4, keyValue: 'john@example.com', data: { 5: 'John' } }
+        await client.upsertRecords('bux123', 4, [
+          { keyValue: 'john@example.com', data: { 5: 'John' } }
         ]);
 
         expect(mockAxiosInstance.post).toHaveBeenCalledWith(
@@ -201,9 +208,9 @@ describe('QuickBaseClient - Utility and Advanced Methods', () => {
       it('should upsert multiple records', async () => {
         mockAxiosInstance.post.mockResolvedValue({ data: { data: [] } });
 
-        await client.upsertRecords('bux123', [
-          { keyField: 4, keyValue: 'john@example.com', data: { 5: 'John' } },
-          { keyField: 4, keyValue: 'jane@example.com', data: { 5: 'Jane' } }
+        await client.upsertRecords('bux123', 4, [
+          { keyValue: 'john@example.com', data: { 5: 'John' } },
+          { keyValue: 'jane@example.com', data: { 5: 'Jane' } }
         ]);
 
         expect(mockAxiosInstance.post).toHaveBeenCalledWith(
@@ -224,7 +231,7 @@ describe('QuickBaseClient - Utility and Advanced Methods', () => {
       it('should handle empty upsert', async () => {
         mockAxiosInstance.post.mockResolvedValue({ data: { data: [] } });
 
-        await client.upsertRecords('bux123', []);
+        await client.upsertRecords('bux123', 3, []);
 
         expect(mockAxiosInstance.post).toHaveBeenCalled();
       });

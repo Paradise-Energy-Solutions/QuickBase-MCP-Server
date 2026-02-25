@@ -874,4 +874,59 @@ describe('Tool Definitions', () => {
       expect(required).toContain('confirm');
     });
   });
+
+  describe('createField with complex payloads', () => {
+    it('should accept field with simple payload in CreateFieldSchema', () => {
+      expect(() => {
+        CreateFieldSchema.parse({
+          tableId: 'bux123',
+          confirm: true,
+          label: 'SimpleTest',
+          fieldType: 'text'
+        });
+      }).not.toThrow();
+    });
+
+    it('should accept field with nested metadata', () => {
+      expect(() => {
+        CreateFieldSchema.parse({
+          tableId: 'bux123',
+          confirm: true,
+          label: 'ComplexField',
+          fieldType: 'text_choice'
+        });
+      }).not.toThrow();
+    });
+
+    it('should validate arrays within limits', () => {
+      // CreateFieldSchema with choices array (max 500)
+      const choices = Array(100)
+        .fill(null)
+        .map((_, i) => `choice${i}`);
+      expect(() => {
+        CreateFieldSchema.parse({
+          tableId: 'bux123',
+          confirm: true,
+          label: 'ChoiceField',
+          fieldType: 'text_choice',
+          choices
+        });
+      }).not.toThrow();
+    });
+
+    it('should reject choices array exceeding limits (500)', () => {
+      const tooManyChoices = Array(501)
+        .fill(null)
+        .map((_, i) => `choice${i}`);
+      expect(() => {
+        CreateFieldSchema.parse({
+          tableId: 'bux123',
+          confirm: true,
+          label: 'ChoiceField',
+          fieldType: 'text_choice',
+          choices: tooManyChoices
+        });
+      }).toThrow();
+    });
+  });
 });
