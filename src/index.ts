@@ -53,8 +53,11 @@ function parseArgs<T>(toolName: string, schema: { parse: (input: unknown) => T }
   }
 }
 
+/** Reusable schema for tools that only require appId (no table/record params). */
+const AppIdOnlySchema = z.object({ appId: z.string().min(1).max(64) });
+
 const UpdateFieldArgsSchema = z.object({
-  appId: z.string(),
+  appId: z.string().min(1).max(64),
   confirm: z.literal(true),
   tableId: z.string(),
   fieldId: z.number(),
@@ -64,20 +67,20 @@ const UpdateFieldArgsSchema = z.object({
 });
 
 const DeleteFieldArgsSchema = z.object({
-  appId: z.string(),
+  appId: z.string().min(1).max(64),
   tableId: z.string(),
   fieldId: z.number()
 });
 
 const GetRecordArgsSchema = z.object({
-  appId: z.string(),
+  appId: z.string().min(1).max(64),
   tableId: z.string(),
   recordId: z.number(),
   fieldIds: z.array(z.number()).optional()
 });
 
 const RunReportArgsSchema = z.object({
-  appId: z.string(),
+  appId: z.string().min(1).max(64),
   tableId: z.string(),
   reportId: z.string()
 });
@@ -136,14 +139,31 @@ class QuickBaseMCPServer {
     this.setupHandlers();
   }
 
+  /**
+   * Returns a cached QuickBaseClient for the given appId.
+   * Creates one on first use. Throws McpError for appIds that are not in the
+   * registry, preventing unbounded cache growth and giving callers a
+   * human-readable error instead of a raw API 404/401.
+   */
   private getClientForApp(appId: string): QuickBaseClient {
-    if (!this.clientCache.has(appId)) {
-      const config: QuickBaseConfig = { ...this.baseConfig, appId };
-      this.clientCache.set(appId, new QuickBaseClient(config));
+    if (!this.appRegistry.has(appId)) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Unknown appId "${appId}". Call quickbase_list_apps to see registered apps.`
+      );
     }
-    return this.clientCache.get(appId)!;
+    const cached = this.clientCache.get(appId);
+    if (cached) return cached;
+    const client = new QuickBaseClient({ ...this.baseConfig, appId });
+    this.clientCache.set(appId, client);
+    return client;
   }
 
+  /**
+   * Returns the read-only and allow-destructive flags for the given appId.
+   * Falls back to the strictest safe defaults (readOnly=true, allowDestructive=false)
+   * when appId is absent or not found in the registry.
+   */
   private getSafetyConfigForApp(appId: string | undefined): { readOnly: boolean; allowDestructive: boolean } {
     if (!appId) return { readOnly: true, allowDestructive: false };
     const app = this.appRegistry.get(appId);
@@ -167,7 +187,8 @@ class QuickBaseMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       try {
-        const appId = (args as any)?.appId as string | undefined;
+        const rawAppId = (args as Record<string, unknown>)?.appId;
+        const appId = typeof rawAppId === 'string' ? rawAppId : undefined;
         const safety = this.getSafetyConfigForApp(appId);
         assertToolAllowed({
           name,
@@ -199,25 +220,24 @@ class QuickBaseMCPServer {
   /** Build a map of tool name → handler function. Each handler receives raw args and returns a text string. */
   private buildToolHandlers(): Record<string, (args: unknown) => Promise<string>> {
     const getClient = (appId: string) => this.getClientForApp(appId);
-    const getRegistry = () => this.appRegistry;
     return {
       // ========== APP REGISTRY ==========
       quickbase_list_apps: async () =>
-        JSON.stringify(Array.from(getRegistry().values()), null, 2),
+        JSON.stringify(Array.from(this.appRegistry.values()), null, 2),
 
       // ========== APPLICATION ==========
       quickbase_get_app_info: async (args) => {
-        const a = parseArgs('quickbase_get_app_info', z.object({ appId: z.string() }), args);
+        const a = parseArgs('quickbase_get_app_info', AppIdOnlySchema, args);
         return JSON.stringify(await getClient(a.appId).getAppInfo(), null, 2);
       },
 
       quickbase_get_tables: async (args) => {
-        const a = parseArgs('quickbase_get_tables', z.object({ appId: z.string() }), args);
+        const a = parseArgs('quickbase_get_tables', AppIdOnlySchema, args);
         return JSON.stringify(await getClient(a.appId).getAppTables(), null, 2);
       },
 
       quickbase_test_connection: async (args) => {
-        const a = parseArgs('quickbase_test_connection', z.object({ appId: z.string() }), args);
+        const a = parseArgs('quickbase_test_connection', AppIdOnlySchema, args);
         const ok = await getClient(a.appId).testConnection();
         return `Connection ${ok ? 'successful' : 'failed'}`;
       },
