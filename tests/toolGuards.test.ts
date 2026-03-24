@@ -33,6 +33,17 @@ describe('Tool guards - readonly / destructive / confirmation', () => {
     ).not.toThrow();
   });
 
+  it('allows quickbase_list_apps in readonly mode', () => {
+    expect(() =>
+      assertToolAllowed({
+        name: 'quickbase_list_apps',
+        args: {},
+        readOnly: true,
+        allowDestructive: false
+      })
+    ).not.toThrow();
+  });
+
   it('requires confirmation for mutating tools when not readonly', () => {
     expect(() =>
       assertToolAllowed({

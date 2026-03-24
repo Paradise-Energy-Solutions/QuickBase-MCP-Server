@@ -9,6 +9,7 @@ export const destructiveTools = new Set([
 ]);
 
 export const readOnlyAllowedTools = new Set([
+  'quickbase_list_apps',
   'quickbase_get_app_info',
   'quickbase_get_tables',
   'quickbase_test_connection',
@@ -55,14 +56,14 @@ export function assertToolAllowed(params: {
   if (readOnly && !readOnlyAllowedTools.has(name)) {
     throw new McpError(
       ErrorCode.InvalidRequest,
-      `Server is running in read-only mode (QB_READONLY=true). Tool "${name}" is not allowed.`
+      `Server is running in read-only mode for this application. Tool "${name}" is not allowed.`
     );
   }
 
   if (destructiveTools.has(name) && !allowDestructive) {
     throw new McpError(
       ErrorCode.InvalidRequest,
-      `Destructive tool "${name}" is disabled. Set QB_ALLOW_DESTRUCTIVE=true to enable delete operations.`
+      `Destructive tool "${name}" is disabled for this application. Set QB_APP_<id>_ALLOW_DESTRUCTIVE=true in .env to enable delete operations.`
     );
   }
 

@@ -76,21 +76,25 @@ function validateFieldPayload(payload: unknown, ctx: z.RefinementCtx) {
 
 // Tool parameter schemas
 const TableIdSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('QuickBase table ID (e.g., "buXXXXXXX")')
 });
 
 const RecordIdSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('QuickBase table ID'),
   recordId: z.number().describe('Record ID number')
 });
 
 const CreateTableSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   name: z.string().min(1).max(128).describe('Table name'),
   description: z.string().max(1024).optional().describe('Table description')
 });
 
 const CreateFieldSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID to add field to'),
   label: z.string().min(1).max(128).describe('Field label/name'),
@@ -108,6 +112,7 @@ const CreateFieldSchema = z.object({
 });
 
 const QueryRecordsSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('Table ID to query'),
   select: z.array(z.number()).optional().describe('Field IDs to select'),
   where: z.string().max(5000).optional().describe('QuickBase query filter'),
@@ -120,6 +125,7 @@ const QueryRecordsSchema = z.object({
 });
 
 const CreateRecordSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID to create record in'),
   fields: z.record(z.any())
@@ -128,6 +134,7 @@ const CreateRecordSchema = z.object({
 });
 
 const UpdateRecordSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   recordId: z.number().describe('Record ID to update'),
@@ -137,6 +144,7 @@ const UpdateRecordSchema = z.object({
 });
 
 const BulkCreateSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for data-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   records: z.array(z.object({
@@ -145,12 +153,14 @@ const BulkCreateSchema = z.object({
 });
 
 const SearchRecordsSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('Table ID to search'),
   searchTerm: z.string().min(1).max(200).describe('Text to search for'),
   fieldIds: z.array(z.number()).optional().describe('Field IDs to search in')
 });
 
 const CreateRelationshipSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   parentTableId: z.string().min(3).max(64).describe('Parent table ID'),
   childTableId: z.string().min(3).max(64).describe('Child table ID'),
@@ -158,6 +168,7 @@ const CreateRelationshipSchema = z.object({
 });
 
 const CreateAdvancedRelationshipSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   parentTableId: z.string().describe('Parent table ID'),
   childTableId: z.string().describe('Child table ID'),
@@ -170,6 +181,7 @@ const CreateAdvancedRelationshipSchema = z.object({
 });
 
 const CreateLookupFieldSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   childTableId: z.string().describe('Child table ID where lookup field will be created'),
   parentTableId: z.string().describe('Parent table ID to lookup from'),
@@ -179,12 +191,14 @@ const CreateLookupFieldSchema = z.object({
 });
 
 const ValidateRelationshipSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   parentTableId: z.string().describe('Parent table ID'),
   childTableId: z.string().describe('Child table ID'),
   foreignKeyFieldId: z.number().describe('Foreign key field ID to validate')
 });
 
 const CreateJunctionTableSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   junctionTableName: z.string().describe('Name for the junction table'),
   table1Id: z.string().describe('First table ID'),
@@ -198,6 +212,7 @@ const CreateJunctionTableSchema = z.object({
 });
 
 const GetRelationshipDetailsSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().describe('Table ID to analyze relationships for'),
   includeFields: z.boolean().default(true).describe('Include related field details')
 });
@@ -205,6 +220,7 @@ const GetRelationshipDetailsSchema = z.object({
 // ========== WEBHOOK SCHEMAS ==========
 
 const CreateWebhookSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   label: z.string().min(1).max(128).describe('Unique name for the webhook'),
@@ -224,15 +240,18 @@ const CreateWebhookSchema = z.object({
 });
 
 const ListWebhooksSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('Table ID')
 });
 
 const DeleteWebhookSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   webhookId: z.string().describe('Webhook ID to delete')
 });
 
 const TestWebhookSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   webhookUrl: z.string()
     .url()
     .refine(url => url.startsWith('https://'), { message: 'Webhook URL must use the HTTPS scheme' })
@@ -244,6 +263,7 @@ const TestWebhookSchema = z.object({
 // ========== NOTIFICATION SCHEMAS ==========
 
 const CreateNotificationSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   confirm: z.literal(true).describe('Required confirmation for schema-modifying operations'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   label: z.string().min(1).max(128).describe('Unique name for the notification'),
@@ -257,16 +277,33 @@ const CreateNotificationSchema = z.object({
 });
 
 const ListNotificationsSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('Table ID')
 });
 
 const DeleteNotificationSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   notificationId: z.string().describe('Notification ID to delete')
 });
 
+// Injects appId into a tool's JSON Schema properties and required list
+function withAppId(tool: Tool): Tool {
+  return {
+    ...tool,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'QuickBase application ID' },
+        ...(tool.inputSchema as any).properties
+      },
+      required: ['appId', ...((tool.inputSchema as any).required ?? [])]
+    }
+  };
+}
+
 // Define all MCP tools
-export const quickbaseTools: Tool[] = [
+const rawTools: Tool[] = [
   // ========== APPLICATION TOOLS ==========
   {
     name: 'quickbase_get_app_info',
@@ -802,6 +839,19 @@ export const quickbaseTools: Tool[] = [
       required: ['tableId', 'notificationId']
     }
   },
+];
+
+export const quickbaseTools: Tool[] = [
+  {
+    name: 'quickbase_list_apps',
+    description: 'Lists all QuickBase applications registered in this server\'s configuration. Use the returned appId values when calling other tools. Call quickbase_get_app_info with an appId to fetch live app details from QuickBase.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+  ...rawTools.map(withAppId)
 ];
 
 // Export schemas for validation
