@@ -22,16 +22,18 @@ import {
   quickbaseTools
 } from '../src/tools/index';
 
+const TEST_APP_ID = 'bkhxfnzby';
+
 describe('Tool Schemas - Validation', () => {
   describe('TableIdSchema', () => {
     it('should validate valid table ID', () => {
-      const data = { tableId: 'bux123' };
+      const data = { appId: TEST_APP_ID, tableId: 'bux123' };
       expect(TableIdSchema.parse(data)).toEqual(data);
     });
 
     it('should validate different table ID formats', () => {
-      expect(TableIdSchema.parse({ tableId: 'bux' }).tableId).toBe('bux');
-      expect(TableIdSchema.parse({ tableId: 'a'.repeat(64) }).tableId.length).toBe(64);
+      expect(TableIdSchema.parse({ appId: TEST_APP_ID, tableId: 'bux' }).tableId).toBe('bux');
+      expect(TableIdSchema.parse({ appId: TEST_APP_ID, tableId: 'a'.repeat(64) }).tableId.length).toBe(64);
     });
 
     it('should reject table ID too short', () => {
@@ -49,7 +51,7 @@ describe('Tool Schemas - Validation', () => {
 
   describe('RecordIdSchema', () => {
     it('should validate record with tableId and recordId', () => {
-      const data = { tableId: 'bux123', recordId: 42 };
+      const data = { appId: TEST_APP_ID, tableId: 'bux123', recordId: 42 };
       expect(RecordIdSchema.parse(data)).toEqual(data);
     });
 
@@ -68,12 +70,12 @@ describe('Tool Schemas - Validation', () => {
 
   describe('CreateTableSchema', () => {
     it('should validate table creation with required fields', () => {
-      const data = { confirm: true, name: 'Contacts' };
+      const data = { appId: TEST_APP_ID, confirm: true, name: 'Contacts' };
       expect(CreateTableSchema.parse(data)).toEqual(data);
     });
 
     it('should validate with description', () => {
-      const data = { confirm: true, name: 'Contacts', description: 'All contacts' };
+      const data = { appId: TEST_APP_ID, confirm: true, name: 'Contacts', description: 'All contacts' };
       expect(CreateTableSchema.parse(data)).toEqual(data);
     });
 
@@ -105,6 +107,7 @@ describe('Tool Schemas - Validation', () => {
   describe('CreateFieldSchema', () => {
     it('should validate basic field creation', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         label: 'Email',
@@ -115,6 +118,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate field with all optional properties', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         label: 'Status',
@@ -143,6 +147,7 @@ describe('Tool Schemas - Validation', () => {
 
       validTypes.forEach(fieldType => {
         const data = {
+          appId: TEST_APP_ID,
           confirm: true,
           tableId: 'bux123',
           label: 'Test',
@@ -163,6 +168,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate choices array', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         label: 'Status',
@@ -186,12 +192,13 @@ describe('Tool Schemas - Validation', () => {
 
   describe('QueryRecordsSchema', () => {
     it('should validate query with tableId only', () => {
-      const data = { tableId: 'bux123' };
+      const data = { appId: TEST_APP_ID, tableId: 'bux123' };
       expect(QueryRecordsSchema.parse(data)).toEqual(data);
     });
 
     it('should validate query with filters', () => {
       const data = {
+        appId: TEST_APP_ID,
         tableId: 'bux123',
         where: '{4.EX."John"}',
         top: 100,
@@ -202,6 +209,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate sortBy criteria', () => {
       const data = {
+        appId: TEST_APP_ID,
         tableId: 'bux123',
         sortBy: [
           { fieldId: 4, order: 'ASC' },
@@ -233,6 +241,7 @@ describe('Tool Schemas - Validation', () => {
   describe('CreateRecordSchema', () => {
     it('should validate record creation', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         fields: {
@@ -245,6 +254,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate with complex field types', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         fields: {
@@ -275,6 +285,7 @@ describe('Tool Schemas - Validation', () => {
   describe('UpdateRecordSchema', () => {
     it('should validate record update', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         recordId: 42,
@@ -303,6 +314,7 @@ describe('Tool Schemas - Validation', () => {
   describe('BulkCreateSchema', () => {
     it('should validate bulk record creation', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         records: [
@@ -325,6 +337,7 @@ describe('Tool Schemas - Validation', () => {
     it('should allow up to 250 records', () => {
       const records = Array.from({ length: 250 }, () => ({ fields: { 4: 'Test' } }));
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         tableId: 'bux123',
         records
@@ -336,6 +349,7 @@ describe('Tool Schemas - Validation', () => {
   describe('SearchRecordsSchema', () => {
     it('should validate record search', () => {
       const data = {
+        appId: TEST_APP_ID,
         tableId: 'bux123',
         searchTerm: 'John'
       };
@@ -344,6 +358,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate with fieldIds', () => {
       const data = {
+        appId: TEST_APP_ID,
         tableId: 'bux123',
         searchTerm: 'John',
         fieldIds: [4, 5, 6]
@@ -370,6 +385,7 @@ describe('Tool Schemas - Validation', () => {
   describe('CreateRelationshipSchema', () => {
     it('should validate relationship creation', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
@@ -398,6 +414,7 @@ describe('Tool Schemas - Validation', () => {
   describe('CreateAdvancedRelationshipSchema', () => {
     it('should validate advanced relationship', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
@@ -408,6 +425,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate with lookup fields', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
@@ -421,6 +439,7 @@ describe('Tool Schemas - Validation', () => {
 
     it('should validate relationship type', () => {
       const oneToMany = {
+        appId: TEST_APP_ID,
         confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
@@ -428,6 +447,7 @@ describe('Tool Schemas - Validation', () => {
         relationshipType: 'one-to-many' as const
       };
       const manyToMany = {
+        appId: TEST_APP_ID,
         confirm: true,
         parentTableId: 'bux123',
         childTableId: 'bux124',
@@ -442,6 +462,7 @@ describe('Tool Schemas - Validation', () => {
   describe('CreateLookupFieldSchema', () => {
     it('should validate lookup field creation', () => {
       const data = {
+        appId: TEST_APP_ID,
         confirm: true,
         childTableId: 'bux124',
         parentTableId: 'bux123',
@@ -465,6 +486,7 @@ describe('Tool Schemas - Validation', () => {
   describe('ValidateRelationshipSchema', () => {
     it('should validate relationship validation request', () => {
       const data = {
+        appId: TEST_APP_ID,
         parentTableId: 'bux123',
         childTableId: 'bux124',
         foreignKeyFieldId: 15
@@ -503,6 +525,12 @@ describe('Tool Definitions', () => {
         t.name.includes('app') || t.name.includes('connection')
       );
       expect(appTools.length).toBeGreaterThan(0);
+    });
+
+    it('should include quickbase_list_apps tool', () => {
+      const tool = quickbaseTools.find(t => t.name === 'quickbase_list_apps');
+      expect(tool).toBeDefined();
+      expect((tool?.inputSchema as any).required).not.toContain('appId');
     });
 
     it('should have table tools', () => {
@@ -581,6 +609,7 @@ describe('Tool Definitions', () => {
     describe('CreateWebhookSchema', () => {
       it('should validate webhook creation with required fields', () => {
         const data = {
+          appId: TEST_APP_ID,
           confirm: true,
           tableId: 'bux123',
           label: 'My Webhook',
@@ -606,6 +635,7 @@ describe('Tool Definitions', () => {
         validCombos.forEach(combo => {
           expect(
             CreateWebhookSchema.parse({
+              appId: TEST_APP_ID,
               confirm: true,
               tableId: 'bux123',
               label: 'Webhook',
@@ -630,6 +660,7 @@ describe('Tool Definitions', () => {
 
       it('should validate with optional parameters', () => {
         const data = {
+          appId: TEST_APP_ID,
           confirm: true,
           tableId: 'bux123',
           label: 'My Webhook',
@@ -660,7 +691,7 @@ describe('Tool Definitions', () => {
 
     describe('ListWebhooksSchema', () => {
       it('should validate listing webhooks', () => {
-        const data = { tableId: 'bux123' };
+        const data = { appId: TEST_APP_ID, tableId: 'bux123' };
         expect(ListWebhooksSchema.parse(data)).toEqual(data);
       });
 
@@ -671,7 +702,7 @@ describe('Tool Definitions', () => {
 
     describe('DeleteWebhookSchema', () => {
       it('should validate webhook deletion', () => {
-        const data = { tableId: 'bux123', webhookId: 'webhook456' };
+        const data = { appId: TEST_APP_ID, tableId: 'bux123', webhookId: 'webhook456' };
         expect(DeleteWebhookSchema.parse(data)).toEqual(data);
       });
 
@@ -684,6 +715,7 @@ describe('Tool Definitions', () => {
     describe('TestWebhookSchema', () => {
       it('should validate webhook testing', () => {
         const data = {
+          appId: TEST_APP_ID,
           webhookUrl: 'https://example.com/webhook',
           testPayload: { recordId: 123, event: 'add' }
         };
@@ -692,6 +724,7 @@ describe('Tool Definitions', () => {
 
       it('should allow optional headers', () => {
         const data = {
+          appId: TEST_APP_ID,
           webhookUrl: 'https://example.com/webhook',
           testPayload: { test: true },
           headers: { 'X-Custom': 'value' }
@@ -714,6 +747,7 @@ describe('Tool Definitions', () => {
     describe('CreateNotificationSchema', () => {
       it('should validate notification creation with required fields', () => {
         const data = {
+          appId: TEST_APP_ID,
           confirm: true,
           tableId: 'bux123',
           label: 'Email Alert',
@@ -743,6 +777,7 @@ describe('Tool Definitions', () => {
         events.forEach(event => {
           expect(
             CreateNotificationSchema.parse({
+              appId: TEST_APP_ID,
               confirm: true,
               tableId: 'bux123',
               label: 'Alert',
@@ -785,6 +820,7 @@ describe('Tool Definitions', () => {
 
       it('should validate with optional parameters', () => {
         const data = {
+          appId: TEST_APP_ID,
           confirm: true,
           tableId: 'bux123',
           label: 'Email Alert',
@@ -802,7 +838,7 @@ describe('Tool Definitions', () => {
 
     describe('ListNotificationsSchema', () => {
       it('should validate listing notifications', () => {
-        const data = { tableId: 'bux123' };
+        const data = { appId: TEST_APP_ID, tableId: 'bux123' };
         expect(ListNotificationsSchema.parse(data)).toEqual(data);
       });
 
@@ -813,7 +849,7 @@ describe('Tool Definitions', () => {
 
     describe('DeleteNotificationSchema', () => {
       it('should validate notification deletion', () => {
-        const data = { tableId: 'bux123', notificationId: 'notif789' };
+        const data = { appId: TEST_APP_ID, tableId: 'bux123', notificationId: 'notif789' };
         expect(DeleteNotificationSchema.parse(data)).toEqual(data);
       });
 
@@ -879,6 +915,7 @@ describe('Tool Definitions', () => {
     it('should accept field with simple payload in CreateFieldSchema', () => {
       expect(() => {
         CreateFieldSchema.parse({
+          appId: TEST_APP_ID,
           tableId: 'bux123',
           confirm: true,
           label: 'SimpleTest',
@@ -890,6 +927,7 @@ describe('Tool Definitions', () => {
     it('should accept field with nested metadata', () => {
       expect(() => {
         CreateFieldSchema.parse({
+          appId: TEST_APP_ID,
           tableId: 'bux123',
           confirm: true,
           label: 'ComplexField',
@@ -905,6 +943,7 @@ describe('Tool Definitions', () => {
         .map((_, i) => `choice${i}`);
       expect(() => {
         CreateFieldSchema.parse({
+          appId: TEST_APP_ID,
           tableId: 'bux123',
           confirm: true,
           label: 'ChoiceField',
@@ -920,6 +959,7 @@ describe('Tool Definitions', () => {
         .map((_, i) => `choice${i}`);
       expect(() => {
         CreateFieldSchema.parse({
+          appId: TEST_APP_ID,
           tableId: 'bux123',
           confirm: true,
           label: 'ChoiceField',

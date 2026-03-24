@@ -98,6 +98,14 @@ export const QuickBaseConfig = z.object({
 
 export type QuickBaseConfig = z.infer<typeof QuickBaseConfig>;
 
+// Per-app configuration (loaded from environment at startup)
+export interface AppConfig {
+  id: string;
+  name: string;
+  readOnly: boolean;
+  allowDestructive: boolean;
+}
+
 // Query Options
 export const QueryOptions = z.object({
   select: z.array(z.number()).optional(),
