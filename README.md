@@ -12,7 +12,6 @@ A Model Context Protocol (MCP) server that provides maximum flexibility for Quic
 ### Table Operations
 - Create new tables
 - Get table information
-- Update table properties
 - Delete tables
 
 ### Field Management
@@ -91,6 +90,19 @@ QB_APP_byyyyyyyyyy_NAME=Archive (read-only)
 QB_APP_byyyyyyyyyy_READONLY=true
 QB_APP_byyyyyyyyyy_ALLOW_DESTRUCTIVE=false
 ```
+
+### Safety flag interaction
+
+`READONLY` and `ALLOW_DESTRUCTIVE` are checked as two independent guards, applied in that order:
+
+| `READONLY` | `ALLOW_DESTRUCTIVE` | Effect |
+|---|---|---|
+| `true` | `false` | Read-only — all writes and deletes blocked **(safest)** |
+| `false` | `false` | Read + write — deletes blocked |
+| `false` | `true` | Full access — reads, writes, and deletes all permitted |
+| `true` | `true` | Same as `READONLY=true` — `ALLOW_DESTRUCTIVE` is ignored |
+
+> **Key rule:** When `READONLY=true`, all non-read tools are blocked before `ALLOW_DESTRUCTIVE` is ever evaluated. Setting `ALLOW_DESTRUCTIVE=true` has no practical effect unless `READONLY=false`.
 
 4. **Build the project:**
 ```bash
@@ -172,6 +184,8 @@ App registration is read from the `.env` file in the server's package directory.
 
 > **All tools (except `quickbase_list_apps`) require an `appId` parameter.** Call `quickbase_list_apps` first to see registered apps and their IDs.
 
+> **All create and update tools require `"confirm": true`** in their arguments. This covers tables, fields, records, webhooks, notifications, and all relationship operations. If you omit it you will receive: *"requires confirmation. Re-run with `{ "confirm": true, ... }`"*. Note: delete tools do **not** use `confirm` — they are controlled by the per-app `ALLOW_DESTRUCTIVE` flag instead.
+
 ### Table Tools
 - `quickbase_create_table` - Create new table
 - `quickbase_get_table_info` - Get table details
@@ -195,6 +209,22 @@ App registration is read from the `.env` file in the server's package directory.
 ### Relationship Tools
 - `quickbase_create_relationship` - Create table relationship
 - `quickbase_get_relationships` - Get existing relationships
+- `quickbase_create_advanced_relationship` - Create relationship with advanced options
+- `quickbase_create_lookup_field` - Create a lookup field from a relationship
+- `quickbase_validate_relationship` - Validate a relationship configuration
+- `quickbase_get_relationship_details` - Get full relationship details
+- `quickbase_create_junction_table` - Create a many-to-many junction table
+
+### Webhook Tools
+- `quickbase_create_webhook` - Create a webhook
+- `quickbase_list_webhooks` - List webhooks for a table
+- `quickbase_delete_webhook` - Delete a webhook
+- `quickbase_test_webhook` - Test a webhook
+
+### Notification Tools
+- `quickbase_create_notification` - Create a notification
+- `quickbase_list_notifications` - List notifications for a table
+- `quickbase_delete_notification` - Delete a notification
 
 ### Utility Tools
 - `quickbase_get_reports` - Get all reports
@@ -215,6 +245,7 @@ App registration is read from the `.env` file in the server's package directory.
 {
   "name": "quickbase_create_table",
   "arguments": {
+    "confirm": true,
     "appId": "bxxxxxxxxx",
     "name": "New Projects",
     "description": "Project tracking table"
@@ -227,6 +258,7 @@ App registration is read from the `.env` file in the server's package directory.
 {
   "name": "quickbase_create_field",
   "arguments": {
+    "confirm": true,
     "appId": "bxxxxxxxxx",
     "tableId": "your_table_id_here",
     "label": "Project Status",
@@ -256,6 +288,7 @@ App registration is read from the `.env` file in the server's package directory.
 {
   "name": "quickbase_create_record",
   "arguments": {
+    "confirm": true,
     "appId": "bxxxxxxxxx",
     "tableId": "your_table_id_here",
     "fields": {
