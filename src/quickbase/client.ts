@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions } from '../types/quickbase.js';
+import { RelayClient } from '../relay/server.js';
 import { envFlag } from '../utils/env.js';
 import { formatErrorForLog } from '../utils/errors.js';
 
@@ -7,6 +8,7 @@ export class QuickBaseClient {
   private axios: AxiosInstance;
   private config: QuickBaseConfig;
   private logApi: boolean;
+  private relayClient: RelayClient | null = null;
 
   private static extractCreatedRecordIds(responseData: any): number[] {
     const normalizeIds = (ids: unknown[]): number[] =>
@@ -997,4 +999,113 @@ export class QuickBaseClient {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&apos;');
   }
-} 
+
+  // ========== RELAY CLIENT ==========
+
+  /** Inject the relay client after construction (avoids circular dependency). */
+  setRelayClient(relay: RelayClient): void {
+    this.relayClient = relay;
+  }
+
+  private requireRelay(): RelayClient {
+    if (!this.relayClient) {
+      throw new Error('Pipeline relay client is not configured. Ensure the relay server started successfully.');
+    }
+    return this.relayClient;
+  }
+
+  // ========== PIPELINE METHODS (Unofficial API — may break without notice) ==========
+
+  async listPipelines(opts: {
+    pageNumber?: number;
+    pageSize?: number;
+    realmWide?: boolean;
+    impersonateUserId?: string;
+  } = {}): Promise<any> {
+    const relay = this.requireRelay();
+    const { pageNumber = 1, pageSize = 25, realmWide = false, impersonateUserId } = opts;
+
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/v2/pipelines/query/paged?pageNumber=${pageNumber}&pageSize=${pageSize}`,
+        'POST',
+        { tags: [], channels: [], users: [], searchString: '', requestRealmPipelines: realmWide }
+      );
+      return result.data;
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  async getPipelineDetail(pipelineId: string, impersonateUserId?: string): Promise<any> {
+    const relay = this.requireRelay();
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/designer?open=true`,
+        'GET'
+      );
+      return result.data;
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  async getPipelineActivity(pipelineId: string, opts: {
+    startDate?: string;
+    endDate?: string;
+    perPage?: number;
+    impersonateUserId?: string;
+  } = {}): Promise<any> {
+    const relay = this.requireRelay();
+    const { perPage = 25, impersonateUserId } = opts;
+
+    const now = Math.floor(Date.now() / 1000);
+    const start = opts.startDate ? Math.floor(new Date(opts.startDate).getTime() / 1000) : now - 7 * 86400;
+    const end = opts.endDate ? Math.floor(new Date(opts.endDate).getTime() / 1000) : now;
+
+    const qs = new URLSearchParams({
+      start: String(start),
+      end: String(end),
+      scope: 'pipeline',
+      per_page: String(perPage),
+      pipeline_id: pipelineId,
+      pipeline_run_id: '',
+      offset: ''
+    });
+
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(`/api/v2/activity?${qs.toString()}`, 'GET');
+      return result.data;
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  async findPipelineUsers(query: string): Promise<any> {
+    const relay = this.requireRelay();
+    const result = await relay.request(
+      `/api/realm/findmatchingusers/${encodeURIComponent(query)}`,
+      'GET'
+    );
+    return result.data;
+  }
+
+  async startPipelineImpersonation(qbUserId: string): Promise<any> {
+    const relay = this.requireRelay();
+    const result = await relay.request(
+      '/api/impersonation/realm/start',
+      'POST',
+      { qb_user_id: qbUserId }
+    );
+    return result.data;
+  }
+
+  async endPipelineImpersonation(): Promise<any> {
+    const relay = this.requireRelay();
+    const result = await relay.request('/api/impersonation/end', 'POST', {});
+    return result.data;
+  }
+}
