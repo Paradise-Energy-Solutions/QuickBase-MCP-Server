@@ -177,6 +177,23 @@ export class RelayClient {
       `Setup page: http://localhost:${this.port}/setup`,
     ].join('\n');
   }
+
+  /**
+   * Gracefully tear down the relay: reject pending tool requests and close any
+   * open long-poll connection. Called when another relay instance signals this
+   * server to shut down via GET /relay/shutdown.
+   */
+  shutdown(): void {
+    if (this.longPollRes && !this.longPollRes.writableEnded) {
+      this.longPollRes.socket?.destroy();
+      this.longPollRes = null;
+    }
+    for (const [, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(new McpError(ErrorCode.InternalError, 'Relay server shutting down'));
+    }
+    this.pending.clear();
+  }
 }
 
 function buildSetupPage(realm: string, port: number): string {
@@ -341,6 +358,18 @@ export function startRelayServer(realm: string, port: number): RelayClient {
       return;
     }
 
+    // ── GET /relay/shutdown ──────────────────────────────────────────────────
+    // Called by a new relay instance on the same port to ask this server to
+    // release the port gracefully. Only reachable from 127.0.0.1.
+    if (req.method === 'GET' && url === '/relay/shutdown') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      client.shutdown();
+      setImmediate(() => server.close());
+      console.error('QB Pipeline relay server: received shutdown signal — closing to allow restart.');
+      return;
+    }
+
     // ── GET /relay/pending ────────────────────────────────────────────────────
     if (req.method === 'GET' && url === '/relay/pending') {
       client.registerLongPoll(res);
@@ -402,6 +431,16 @@ export function startRelayServer(realm: string, port: number): RelayClient {
         const delay = RETRY_DELAYS_MS[attempt++];
         const elapsed = RETRY_DELAYS_MS.slice(0, attempt).reduce((a, b) => a + b, 0);
         console.error(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsed} ms elapsed)`);
+        // On the first attempt, ask the existing relay server to shut down so
+        // the port is released sooner than its natural process-exit.
+        if (attempt === 1) {
+          const shutdownReq = http.request(
+            { host: '127.0.0.1', port, path: '/relay/shutdown', method: 'GET', timeout: 1000 },
+            (r) => { r.resume(); }
+          );
+          shutdownReq.on('error', () => {}); // non-QB process on this port — ignore
+          shutdownReq.end();
+        }
         server.close();
         setTimeout(tryListen, delay).unref();
       }
