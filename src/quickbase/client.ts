@@ -1079,8 +1079,18 @@ export class QuickBaseClient {
     const { perPage = 25, impersonateUserId } = opts;
 
     const now = Math.floor(Date.now() / 1000);
-    const start = opts.startDate ? Math.floor(new Date(opts.startDate).getTime() / 1000) : now - 7 * 86400;
-    const end = opts.endDate ? Math.floor(new Date(opts.endDate).getTime() / 1000) : now;
+
+    const startMs = opts.startDate ? new Date(opts.startDate).getTime() : NaN;
+    if (opts.startDate && isNaN(startMs)) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid startDate: "${opts.startDate}" is not a valid date`);
+    }
+    const endMs = opts.endDate ? new Date(opts.endDate).getTime() : NaN;
+    if (opts.endDate && isNaN(endMs)) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid endDate: "${opts.endDate}" is not a valid date`);
+    }
+
+    const start = opts.startDate ? Math.floor(startMs / 1000) : now - 7 * 86400;
+    const end = opts.endDate ? Math.floor(endMs / 1000) : now;
 
     // Multi-value scope params must use append() — URLSearchParams constructor
     // would merge duplicate keys into a single value, losing 'pipe' and 'poller'.

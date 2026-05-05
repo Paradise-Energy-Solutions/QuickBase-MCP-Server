@@ -72,6 +72,8 @@ export class RelayClient {
 
   /** Called by the relay HTTP server when the bookmarklet POSTs /relay/result/:id */
   receiveResult(id: string, result: RelayResult): void {
+    // Refresh activity — a result response proves the bookmarklet is alive.
+    if (this.helloState) this.helloState.receivedAt = Date.now();
     const entry = this.pending.get(id);
     if (!entry) return;
     clearTimeout(entry.timer);
@@ -81,6 +83,8 @@ export class RelayClient {
 
   /** Called by the relay HTTP server when a GET /relay/pending arrives */
   registerLongPoll(res: http.ServerResponse): void {
+    // Refresh activity — each long-poll proves the bookmarklet is still alive.
+    if (this.helloState) this.helloState.receivedAt = Date.now();
     // Replace any stale long-poll connection
     if (this.longPollRes && !this.longPollRes.writableEnded) {
       this.longPollRes.writeHead(204).end();
@@ -184,7 +188,7 @@ export class RelayClient {
   /**
    * Gracefully tear down the relay: reject pending tool requests and close any
    * open long-poll connection. Called when another relay instance signals this
-   * server to shut down via GET /relay/shutdown.
+   * server to shut down via POST /relay/shutdown.
    */
   shutdown(): void {
     if (this.longPollRes && !this.longPollRes.writableEnded) {
@@ -336,6 +340,21 @@ function cors(res: http.ServerResponse, allowedOrigin: string): void {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
+/**
+ * Returns true when the request origin is acceptable:
+ *  - No Origin header  → same-process HTTP request (node:http.request), always allowed.
+ *  - Origin matches the QB realm → bookmarklet running on the QB domain, allowed.
+ *  - Any other origin  → cross-site request, denied.
+ *
+ * This guards endpoints that mutate server state (/relay/shutdown, /relay/result)
+ * against cross-site requests that bypass CORS preflight (e.g. form POSTs with
+ * application/x-www-form-urlencoded).
+ */
+function isOriginAllowed(origin: string | undefined, allowedOrigin: string): boolean {
+  if (origin === undefined || origin === '') return true; // same-process call
+  return origin === allowedOrigin;
+}
+
 export function startRelayServer(realm: string, port: number): RelayClient {
   const client = new RelayClient(port);
   const allowedOrigin = `https://${realm}`;
@@ -368,11 +387,16 @@ export function startRelayServer(realm: string, port: number): RelayClient {
 
     // ── POST /relay/shutdown ─────────────────────────────────────────────────
     // Called by a new relay instance to ask this server to release the port
-    // gracefully. Using POST (not GET) is intentional: POST requests with
-    // Content-Type:application/json trigger a CORS preflight that the
-    // realm-restricted origin check will block, preventing CSRF from arbitrary
-    // web pages. A simple GET would be triggerable by any <img> tag.
+    // gracefully. POST-only + explicit Origin check prevents CSRF from arbitrary
+    // web pages: a same-process shutdown (no Origin header) is always accepted;
+    // a cross-site request carrying a non-QB Origin is rejected with 403.
     if (req.method === 'POST' && url === '/relay/shutdown') {
+      const origin = req.headers.origin as string | undefined;
+      if (!isOriginAllowed(origin, allowedOrigin)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
       client.shutdown();
@@ -404,6 +428,12 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     // ── POST /relay/result/:id ────────────────────────────────────────────────
     const resultMatch = url.match(/^\/relay\/result\/([a-f0-9-]{36})$/);
     if (req.method === 'POST' && resultMatch) {
+      const origin = req.headers.origin as string | undefined;
+      if (!isOriginAllowed(origin, allowedOrigin)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
       try {
         const result = await readBody(req) as RelayResult;
         client.receiveResult(resultMatch[1], result);

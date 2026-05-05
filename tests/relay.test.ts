@@ -346,7 +346,7 @@ describe('startRelayServer — POST /relay/shutdown endpoint', () => {
     // --forceExit handles any residual handle if it closes slowly.
   });
 
-  it('GET /relay/shutdown returns 404 — prevents CSRF via simple <img> requests', async () => {
+  it('GET /relay/shutdown returns 404 — only POST is accepted for this endpoint', async () => {
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const port = await getFreePort();
     startRelayServer('test.quickbase.com', port);
@@ -357,6 +357,94 @@ describe('startRelayServer — POST /relay/shutdown endpoint', () => {
     expect(result.statusCode).toBe(404);
 
     // Clean up
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+});
+
+function httpReqWithHeaders(
+  method: string,
+  port: number,
+  path: string,
+  body: string | undefined,
+  extraHeaders: Record<string, string>,
+): Promise<{ statusCode: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const headers: Record<string, string | number> = { ...extraHeaders };
+    if (body) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = Buffer.byteLength(body);
+    }
+    const req = http.request({ host: '127.0.0.1', port, path, method, headers }, res => {
+      let raw = '';
+      res.on('data', (c: Buffer) => { raw += c.toString(); });
+      res.on('end', () => {
+        try {
+          resolve({ statusCode: res.statusCode ?? 0, body: JSON.parse(raw || 'null') });
+        } catch {
+          resolve({ statusCode: res.statusCode ?? 0, body: raw });
+        }
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+describe('startRelayServer — Origin validation (CSRF protection)', () => {
+  it('POST /relay/shutdown with no Origin header is accepted (same-process call)', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const result = await httpReq('POST', port, '/relay/shutdown', '{}');
+    expect(result.statusCode).toBe(200);
+    consoleSpy.mockRestore();
+  });
+
+  it('POST /relay/shutdown with matching QB realm Origin is accepted', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
+      'Origin': 'https://test.quickbase.com',
+    });
+    expect(result.statusCode).toBe(200);
+    consoleSpy.mockRestore();
+  });
+
+  it('POST /relay/shutdown with foreign Origin is rejected with 403', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
+      'Origin': 'https://evil.example.com',
+    });
+    expect(result.statusCode).toBe(403);
+
+    // Clean up — send without Origin so the server actually shuts down
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+
+  it('POST /relay/result/:id with foreign Origin is rejected with 403', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const fakeId = '00000000-0000-1000-8000-000000000000';
+    const result = await httpReqWithHeaders('POST', port, `/relay/result/${fakeId}`, '{}', {
+      'Origin': 'https://evil.example.com',
+    });
+    expect(result.statusCode).toBe(403);
+
     await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });

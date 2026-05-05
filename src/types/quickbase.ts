@@ -159,7 +159,7 @@ export const QuickBasePipelineDetail = QuickBasePipeline.extend({
 export type QuickBasePipelineDetail = z.infer<typeof QuickBasePipelineDetail>;
 
 export const QuickBasePipelineActivity = z.object({
-  pipeline_id: z.number().optional(),
+  pipeline_id: z.union([z.number(), z.string()]).optional(),
   type: z.string().optional(),
   message: z.string().optional(),
   created_at: z.string().optional(),
