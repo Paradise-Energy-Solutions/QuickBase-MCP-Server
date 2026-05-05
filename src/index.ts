@@ -10,6 +10,7 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { QuickBaseClient } from './quickbase/client.js';
+import { startRelayServer, RelayClient } from './relay/server.js';
 import {
   quickbaseTools,
   TableIdSchema,
@@ -33,7 +34,12 @@ import {
   TestWebhookSchema,
   CreateNotificationSchema,
   ListNotificationsSchema,
-  DeleteNotificationSchema
+  DeleteNotificationSchema,
+  ListPipelinesSchema,
+  GetPipelineSchema,
+  GetPipelineActivitySchema,
+  FindPipelineUsersSchema,
+  StartImpersonationSchema
 } from './tools/index.js';
 import { AppConfig, QuickBaseConfig } from './types/quickbase.js';
 import { loadAppRegistry, loadDotenv } from './utils/env.js';
@@ -102,6 +108,7 @@ class QuickBaseMCPServer {
   private baseConfig: Omit<QuickBaseConfig, 'appId'>;
   private appRegistry: Map<string, AppConfig>;
   private clientCache: Map<string, QuickBaseClient>;
+  private relayClient: RelayClient | null = null;
   private readonly serverName: string;
   private readonly serverVersion: string;
 
@@ -131,6 +138,9 @@ class QuickBaseMCPServer {
     this.serverName = process.env.MCP_SERVER_NAME || 'quickbase-mcp';
     this.serverVersion = process.env.MCP_SERVER_VERSION || '1.0.0';
 
+    const relayPort = parseEnvInt('QB_RELAY_PORT', 3737);
+    this.relayClient = startRelayServer(realm, relayPort);
+
     this.server = new Server(
       { name: this.serverName, version: this.serverVersion },
       { capabilities: { tools: {} } }
@@ -155,6 +165,7 @@ class QuickBaseMCPServer {
     const cached = this.clientCache.get(appId);
     if (cached) return cached;
     const client = new QuickBaseClient({ ...this.baseConfig, appId });
+    if (this.relayClient) client.setRelayClient(this.relayClient);
     this.clientCache.set(appId, client);
     return client;
   }
@@ -490,6 +501,60 @@ class QuickBaseMCPServer {
         const a = parseArgs('quickbase_delete_notification', DeleteNotificationSchema, args);
         await getClient(a.appId).deleteNotification(a.tableId, a.notificationId);
         return JSON.stringify({ success: true, message: `Notification ${a.notificationId} deleted successfully` }, null, 2);
+      },
+
+      // ========== PIPELINES (Unofficial API) ==========
+
+      quickbase_list_pipelines: async (args) => {
+        const a = parseArgs('quickbase_list_pipelines', ListPipelinesSchema, args);
+        return JSON.stringify(
+          await getClient(a.appId).listPipelines({
+            pageNumber: a.pageNumber,
+            pageSize: a.pageSize,
+            realmWide: a.realmWide,
+            impersonateUserId: a.impersonateUserId
+          }),
+          null, 2
+        );
+      },
+
+      quickbase_get_pipeline: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline', GetPipelineSchema, args);
+        return JSON.stringify(
+          await getClient(a.appId).getPipelineDetail(a.pipelineId, a.impersonateUserId),
+          null, 2
+        );
+      },
+
+      quickbase_get_pipeline_activity: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_activity', GetPipelineActivitySchema, args);
+        return JSON.stringify(
+          await getClient(a.appId).getPipelineActivity(a.pipelineId, {
+            startDate: a.startDate,
+            endDate: a.endDate,
+            perPage: a.perPage,
+            impersonateUserId: a.impersonateUserId
+          }),
+          null, 2
+        );
+      },
+
+      quickbase_find_pipeline_users: async (args) => {
+        const a = parseArgs('quickbase_find_pipeline_users', FindPipelineUsersSchema, args);
+        return JSON.stringify(await getClient(a.appId).findPipelineUsers(a.query), null, 2);
+      },
+
+      quickbase_start_impersonation: async (args) => {
+        const a = parseArgs('quickbase_start_impersonation', StartImpersonationSchema, args);
+        return JSON.stringify(
+          await getClient(a.appId).startPipelineImpersonation(a.qbUserId),
+          null, 2
+        );
+      },
+
+      quickbase_end_impersonation: async (args) => {
+        const a = parseArgs('quickbase_end_impersonation', z.object({ appId: z.string().min(1).max(64) }), args);
+        return JSON.stringify(await getClient(a.appId).endPipelineImpersonation(), null, 2);
       },
     };
   }
