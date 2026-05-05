@@ -119,4 +119,49 @@ export const QueryOptions = z.object({
   skip: z.number().optional()
 });
 
-export type QueryOptions = z.infer<typeof QueryOptions>; 
+export type QueryOptions = z.infer<typeof QueryOptions>;
+
+// ========== PIPELINES (Unofficial API) ==========
+
+export const QuickBasePipeline = z.object({
+  id: z.number(),
+  name: z.string(),
+  description: z.string().optional(),
+  type: z.string().optional(),
+  is_enabled: z.boolean().optional(),
+  is_editable: z.boolean().optional(),
+  channels: z.array(z.string()).optional(),
+  tag_ids: z.array(z.number()).optional(),
+  qb_realm_id: z.number().optional(),
+  qb_user_id: z.number().optional(),
+  qb_user_email: z.string().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+  edited_at: z.string().optional()
+});
+
+export type QuickBasePipeline = z.infer<typeof QuickBasePipeline>;
+
+export const QuickBasePipelineDetail = QuickBasePipeline.extend({
+  tree: z.any().optional(),
+  flags: z.any().optional(),
+  state: z.string().optional(),
+  errors: z.array(z.any()).optional(),
+  warnings: z.array(z.any()).optional(),
+  schedule: z.any().optional(),
+  crontab: z.string().optional(),
+  is_valid: z.boolean().optional(),
+  triggered_at: z.string().optional()
+});
+
+export type QuickBasePipelineDetail = z.infer<typeof QuickBasePipelineDetail>;
+
+export const QuickBasePipelineActivity = z.object({
+  pipeline_id: z.number().optional(),
+  type: z.string().optional(),
+  message: z.string().optional(),
+  created_at: z.string().optional(),
+  run_id: z.string().optional()
+});
+
+export type QuickBasePipelineActivity = z.infer<typeof QuickBasePipelineActivity>;
