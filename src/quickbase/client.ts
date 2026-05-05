@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions } from '../types/quickbase.js';
 import { RelayClient } from '../relay/server.js';
 import { envFlag } from '../utils/env.js';
@@ -1014,6 +1015,22 @@ export class QuickBaseClient {
     return this.relayClient;
   }
 
+  /**
+   * Unwrap a relay result, throwing a descriptive McpError on non-2xx status or
+   * network-level errors (status === 0). Keeps all pipeline methods DRY.
+   */
+  private unwrapRelayResult(result: { status: number; data: unknown; error?: string }): unknown {
+    if (result.error || result.status === 0 || result.status >= 400) {
+      const detail = result.error
+        ?? (result.data != null ? JSON.stringify(result.data) : 'no details returned');
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Pipeline API error (HTTP ${result.status}): ${detail}`
+      );
+    }
+    return result.data;
+  }
+
   // ========== PIPELINE METHODS (Unofficial API — may break without notice) ==========
 
   async listPipelines(opts: {
@@ -1032,7 +1049,7 @@ export class QuickBaseClient {
         'POST',
         { tags: [], channels: [], users: [], searchString: '', requestRealmPipelines: realmWide }
       );
-      return result.data;
+      return this.unwrapRelayResult(result);
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
@@ -1046,7 +1063,7 @@ export class QuickBaseClient {
         `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/designer?open=true`,
         'GET'
       );
-      return result.data;
+      return this.unwrapRelayResult(result);
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
@@ -1065,20 +1082,23 @@ export class QuickBaseClient {
     const start = opts.startDate ? Math.floor(new Date(opts.startDate).getTime() / 1000) : now - 7 * 86400;
     const end = opts.endDate ? Math.floor(new Date(opts.endDate).getTime() / 1000) : now;
 
-    const qs = new URLSearchParams({
-      start: String(start),
-      end: String(end),
-      scope: 'pipeline',
-      per_page: String(perPage),
-      pipeline_id: pipelineId,
-      pipeline_run_id: '',
-      offset: ''
-    });
+    // Multi-value scope params must use append() — URLSearchParams constructor
+    // would merge duplicate keys into a single value, losing 'pipe' and 'poller'.
+    const qs = new URLSearchParams();
+    qs.append('start', String(start));
+    qs.append('end', String(end));
+    qs.append('scope', 'pipe');
+    qs.append('scope', 'poller');
+    qs.append('scope', 'pipeline');
+    qs.append('per_page', String(perPage));
+    qs.append('pipeline_id', pipelineId);
+    qs.append('pipeline_run_id', '');
+    qs.append('offset', '');
 
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
       const result = await relay.request(`/api/v2/activity?${qs.toString()}`, 'GET');
-      return result.data;
+      return this.unwrapRelayResult(result);
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
@@ -1090,7 +1110,7 @@ export class QuickBaseClient {
       `/api/realm/findmatchingusers/${encodeURIComponent(query)}`,
       'GET'
     );
-    return result.data;
+    return this.unwrapRelayResult(result);
   }
 
   async startPipelineImpersonation(qbUserId: string): Promise<any> {
@@ -1100,12 +1120,12 @@ export class QuickBaseClient {
       'POST',
       { qb_user_id: qbUserId }
     );
-    return result.data;
+    return this.unwrapRelayResult(result);
   }
 
   async endPipelineImpersonation(): Promise<any> {
     const relay = this.requireRelay();
     const result = await relay.request('/api/impersonation/end', 'POST', {});
-    return result.data;
+    return this.unwrapRelayResult(result);
   }
 }

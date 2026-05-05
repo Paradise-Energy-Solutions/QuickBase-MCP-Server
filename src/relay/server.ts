@@ -49,6 +49,7 @@ interface HelloState {
 const REQUEST_TIMEOUT_MS = 30_000;
 const RELAY_ACTIVE_TTL_MS = 5 * 60 * 1000; // 5 minutes since last hello
 const LONG_POLL_TIMEOUT_MS = 28_000; // hold long-poll just under the client timeout
+const MAX_BODY_BYTES = 1_048_576; // 1 MB — protect against runaway payloads
 
 export class RelayClient {
   private pending: Map<string, PendingEntry> = new Map();
@@ -64,8 +65,8 @@ export class RelayClient {
   /** Called by the relay HTTP server when the bookmarklet POSTs /relay/hello */
   receiveHello(csrfToken: string, realm: string): void {
     this.helloState = { csrfToken, realm, receivedAt: Date.now() };
-    // If a long-poll is waiting and there are queued items, flush now
-    this.flushQueue();
+    // If a long-poll is waiting and there are queued items, dispatch now
+    this.dispatchNextRequest();
   }
 
   /** Called by the relay HTTP server when the bookmarklet POSTs /relay/result/:id */
@@ -84,7 +85,7 @@ export class RelayClient {
       this.longPollRes.writeHead(204).end();
     }
     this.longPollRes = res;
-    this.flushQueue();
+    this.dispatchNextRequest();
 
     // Auto-close after LONG_POLL_TIMEOUT_MS so the bookmarklet reconnects
     setTimeout(() => {
@@ -133,11 +134,17 @@ export class RelayClient {
 
       this.pending.set(req.id, { resolve, reject, timer });
       this.queue.push(req);
-      this.flushQueue();
+      this.dispatchNextRequest();
     });
   }
 
-  private flushQueue(): void {
+  /**
+   * If a long-poll connection is waiting and the queue has an item,
+   * send the next queued request to the bookmarklet and clear the connection.
+   * Intentionally handles exactly one request per call — the protocol is
+   * one long-poll → one response → bookmarklet reconnects.
+   */
+  private dispatchNextRequest(): void {
     if (!this.longPollRes || this.longPollRes.writableEnded) return;
     const next = this.queue.shift();
     if (!next) return;
@@ -278,9 +285,19 @@ fetch('/relay/status').then(r=>r.json()).then(d=>{
 
 function readBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    let raw = '';
-    req.on('data', chunk => { raw += chunk; });
+    const chunks: Buffer[] = [];
+    let bytesRead = 0;
+    req.on('data', (chunk: Buffer) => {
+      bytesRead += chunk.length;
+      if (bytesRead > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new Error('Request body exceeds 1 MB limit'));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
       try { resolve(JSON.parse(raw || 'null')); }
       catch { reject(new Error('Invalid JSON body')); }
     });
