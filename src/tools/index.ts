@@ -287,6 +287,41 @@ const DeleteNotificationSchema = z.object({
   notificationId: z.string().describe('Notification ID to delete')
 });
 
+// ========== PIPELINE SCHEMAS ==========
+
+const ListPipelinesSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pageNumber: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(25),
+  realmWide: z.boolean().default(false),
+  impersonateUserId: z.string().optional()
+});
+
+const GetPipelineSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1),
+  impersonateUserId: z.string().optional()
+});
+
+const GetPipelineActivitySchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  perPage: z.number().int().min(1).max(100).default(25),
+  impersonateUserId: z.string().optional()
+});
+
+const FindPipelineUsersSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  query: z.string().min(1).max(128)
+});
+
+const StartImpersonationSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  qbUserId: z.string().min(1)
+});
+
 // Injects appId into a tool's JSON Schema properties and required list
 function withAppId(tool: Tool): Tool {
   return {
@@ -839,6 +874,86 @@ const rawTools: Tool[] = [
       required: ['tableId', 'notificationId']
     }
   },
+
+  // ========== PIPELINE TOOLS (Unofficial API) ==========
+
+  {
+    name: 'quickbase_list_pipelines',
+    description: '[UNOFFICIAL API — may break without notice] List QuickBase Pipelines. Requires the QB Pipeline Relay bookmarklet to be active in your browser (visit http://localhost:3737/setup). By default returns only pipelines owned by the logged-in user; set realmWide=true to list all realm pipelines (admin only).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageNumber: { type: 'number', description: 'Page number (default 1)' },
+        pageSize: { type: 'number', description: 'Results per page (default 25)' },
+        realmWide: { type: 'boolean', description: 'If true, return all realm pipelines (requires admin). Default false.' },
+        impersonateUserId: { type: 'string', description: 'QuickBase user ID to impersonate for this request (e.g. "62913114")' }
+      },
+      required: []
+    }
+  },
+
+  {
+    name: 'quickbase_get_pipeline',
+    description: '[UNOFFICIAL API — may break without notice] Get the full definition (JSON tree) of a QuickBase Pipeline by its numeric ID. Requires the QB Pipeline Relay bookmarklet to be active in your browser.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID (e.g. "6721062615859200")' },
+        impersonateUserId: { type: 'string', description: 'QuickBase user ID to impersonate for this request' }
+      },
+      required: ['pipelineId']
+    }
+  },
+
+  {
+    name: 'quickbase_get_pipeline_activity',
+    description: '[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active in your browser.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID' },
+        startDate: { type: 'string', description: 'ISO 8601 start date (default: 7 days ago)' },
+        endDate: { type: 'string', description: 'ISO 8601 end date (default: now)' },
+        perPage: { type: 'number', description: 'Results per page (default 25)' },
+        impersonateUserId: { type: 'string', description: 'QuickBase user ID to impersonate for this request' }
+      },
+      required: ['pipelineId']
+    }
+  },
+
+  {
+    name: 'quickbase_find_pipeline_users',
+    description: '[UNOFFICIAL API — may break without notice] Search for QuickBase realm users by name or email. Useful for finding user IDs to pass to impersonateUserId. Requires the QB Pipeline Relay bookmarklet to be active.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Name or email fragment to search for' }
+      },
+      required: ['query']
+    }
+  },
+
+  {
+    name: 'quickbase_start_impersonation',
+    description: '[UNOFFICIAL API — may break without notice] Start impersonating a QuickBase user. While active, subsequent pipeline tool calls operate as that user. Call quickbase_end_impersonation when done. Requires the QB Pipeline Relay bookmarklet to be active.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        qbUserId: { type: 'string', description: 'QuickBase user ID to impersonate (e.g. "62913114")' }
+      },
+      required: ['qbUserId']
+    }
+  },
+
+  {
+    name: 'quickbase_end_impersonation',
+    description: '[UNOFFICIAL API — may break without notice] Stop impersonating a QuickBase user and return to the default authenticated user. Requires the QB Pipeline Relay bookmarklet to be active.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
 ];
 
 export const quickbaseTools: Tool[] = [
@@ -877,5 +992,10 @@ export {
   TestWebhookSchema,
   CreateNotificationSchema,
   ListNotificationsSchema,
-  DeleteNotificationSchema
+  DeleteNotificationSchema,
+  ListPipelinesSchema,
+  GetPipelineSchema,
+  GetPipelineActivitySchema,
+  FindPipelineUsersSchema,
+  StartImpersonationSchema
 }; 
