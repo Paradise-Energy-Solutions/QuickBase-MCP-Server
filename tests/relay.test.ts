@@ -42,6 +42,7 @@ describe('RelayClient', () => {
     });
 
     it('error message includes setup URL', async () => {
+      expect.assertions(1);
       const client = makeClient();
       try {
         await client.request('/api/test', 'GET');
@@ -52,6 +53,7 @@ describe('RelayClient', () => {
     });
 
     it('error message includes step-by-step instructions', async () => {
+      expect.assertions(2);
       const client = makeClient();
       try {
         await client.request('/api/test', 'GET');
@@ -111,6 +113,50 @@ describe('RelayClient', () => {
     it('does not throw on unknown id', () => {
       const client = makeClient();
       expect(() => client.receiveResult('unknown-id', { status: 200, data: {} })).not.toThrow();
+    });
+  });
+
+  describe('request() — 30-second timeout', () => {
+    beforeEach(() => { jest.useFakeTimers(); });
+    afterEach(() => { jest.useRealTimers(); });
+
+    it('rejects with McpError after 30 seconds', async () => {
+      const client = makeClient();
+      client.receiveHello('csrf', 'test.quickbase.com');
+      // No long-poll registered — request stays queued until timeout fires
+      const requestPromise = client.request('/api/slow', 'GET');
+      jest.advanceTimersByTime(30_001);
+      await expect(requestPromise).rejects.toMatchObject({
+        message: expect.stringContaining('timed out')
+      });
+    });
+
+    it('timeout error message includes reconnect instructions', async () => {
+      expect.assertions(2);
+      const client = makeClient();
+      client.receiveHello('csrf', 'test.quickbase.com');
+      const requestPromise = client.request('/api/slow', 'GET');
+      jest.advanceTimersByTime(30_001);
+      try {
+        await requestPromise;
+      } catch (err) {
+        const msg = (err as McpError).message;
+        expect(msg).toContain('bookmarklet');
+        expect(msg).toContain(`http://localhost:${TEST_PORT}/setup`);
+      }
+    });
+
+    it('does not reject before 30 seconds have elapsed', async () => {
+      const client = makeClient();
+      client.receiveHello('csrf', 'test.quickbase.com');
+      let settled = false;
+      client.request('/api/slow', 'GET').then(() => { settled = true; }).catch(() => { settled = true; });
+      jest.advanceTimersByTime(29_999);
+      // Flush microtasks
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      // Clean up — advance past timeout so the pending entry is removed
+      jest.advanceTimersByTime(5_000);
     });
   });
 
