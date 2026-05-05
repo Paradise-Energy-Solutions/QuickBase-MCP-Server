@@ -24,7 +24,14 @@ export const readOnlyAllowedTools = new Set([
   'quickbase_validate_relationship',
   'quickbase_get_relationship_details',
   'quickbase_list_webhooks',
-  'quickbase_list_notifications'
+  'quickbase_list_notifications',
+  // Pipeline tools (unofficial API) — all read-only or impersonation bookkeeping
+  'quickbase_list_pipelines',
+  'quickbase_get_pipeline',
+  'quickbase_get_pipeline_activity',
+  'quickbase_find_pipeline_users',
+  'quickbase_start_impersonation',
+  'quickbase_end_impersonation'
 ]);
 
 export const confirmationRequiredTools = new Set([

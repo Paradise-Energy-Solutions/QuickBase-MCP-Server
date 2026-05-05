@@ -1,6 +1,11 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+// Read the relay port at module load time so tool descriptions reference the
+// correct URL even when QB_RELAY_PORT overrides the default 3737.
+const _relayPort = Number(process.env['QB_RELAY_PORT']) || 3737;
+const _setupUrl = `http://localhost:${_relayPort}/setup`;
+
 function validateFieldPayload(payload: unknown, ctx: z.RefinementCtx) {
   const maxDepth = 4;
   const maxKeysPerObject = 250;
@@ -285,6 +290,41 @@ const DeleteNotificationSchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   tableId: z.string().min(3).max(64).describe('Table ID'),
   notificationId: z.string().describe('Notification ID to delete')
+});
+
+// ========== PIPELINE SCHEMAS ==========
+
+const ListPipelinesSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pageNumber: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(25),
+  realmWide: z.boolean().default(false),
+  impersonateUserId: z.string().optional()
+});
+
+const GetPipelineSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1),
+  impersonateUserId: z.string().optional()
+});
+
+const GetPipelineActivitySchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  perPage: z.number().int().min(1).max(100).default(25),
+  impersonateUserId: z.string().optional()
+});
+
+const FindPipelineUsersSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  query: z.string().min(1).max(128)
+});
+
+const StartImpersonationSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  qbUserId: z.string().min(1)
 });
 
 // Injects appId into a tool's JSON Schema properties and required list
@@ -839,6 +879,86 @@ const rawTools: Tool[] = [
       required: ['tableId', 'notificationId']
     }
   },
+
+  // ========== PIPELINE TOOLS (Unofficial API) ==========
+
+  {
+    name: 'quickbase_list_pipelines',
+    description: `[UNOFFICIAL API — may break without notice] List QuickBase Pipelines. Returns pipelines owned by the currently logged-in browser user. To list pipelines belonging to a different user, pass their QB user ID via impersonateUserId — the server handles impersonation automatically (use quickbase_find_pipeline_users to look up a user ID by name or email). Set realmWide=true to list all realm pipelines regardless of owner (admin only). Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard. First-time setup: ${_setupUrl} (port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageNumber: { type: 'number', description: 'Page number (default 1)' },
+        pageSize: { type: 'number', description: 'Results per page (default 25)' },
+        realmWide: { type: 'boolean', description: 'If true, return all realm pipelines regardless of owner (requires admin). Default false.' },
+        impersonateUserId: { type: 'string', description: 'QB user ID whose pipelines to retrieve (e.g. "62913114"). The server impersonates this user automatically — your browser session is unaffected. Use quickbase_find_pipeline_users to find a user ID by name or email.' }
+      },
+      required: []
+    }
+  },
+
+  {
+    name: 'quickbase_get_pipeline',
+    description: `[UNOFFICIAL API — may break without notice] Get the full definition (JSON tree) of a QuickBase Pipeline by its numeric ID. Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID (e.g. "6721062615859200")' },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['pipelineId']
+    }
+  },
+
+  {
+    name: 'quickbase_get_pipeline_activity',
+    description: `[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID' },
+        startDate: { type: 'string', description: 'ISO 8601 start date (default: 7 days ago)' },
+        endDate: { type: 'string', description: 'ISO 8601 end date (default: now)' },
+        perPage: { type: 'number', description: 'Results per page (default 25)' },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['pipelineId']
+    }
+  },
+
+  {
+    name: 'quickbase_find_pipeline_users',
+    description: `[UNOFFICIAL API — may break without notice] Search for QuickBase realm users by name or email. Useful for finding user IDs to pass to impersonateUserId. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Name or email fragment to search for' }
+      },
+      required: ['query']
+    }
+  },
+
+  {
+    name: 'quickbase_start_impersonation',
+    description: `[UNOFFICIAL API — may break without notice] Start impersonating a QuickBase user. While active, subsequent pipeline tool calls operate as that user. Call quickbase_end_impersonation when done. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        qbUserId: { type: 'string', description: 'QuickBase user ID to impersonate (e.g. "62913114")' }
+      },
+      required: ['qbUserId']
+    }
+  },
+
+  {
+    name: 'quickbase_end_impersonation',
+    description: `[UNOFFICIAL API — may break without notice] Stop impersonating a QuickBase user and return to the default authenticated user. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
 ];
 
 export const quickbaseTools: Tool[] = [
@@ -877,5 +997,10 @@ export {
   TestWebhookSchema,
   CreateNotificationSchema,
   ListNotificationsSchema,
-  DeleteNotificationSchema
+  DeleteNotificationSchema,
+  ListPipelinesSchema,
+  GetPipelineSchema,
+  GetPipelineActivitySchema,
+  FindPipelineUsersSchema,
+  StartImpersonationSchema
 }; 

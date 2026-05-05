@@ -4,7 +4,10 @@ import {
   QuickBaseTable,
   QuickBaseRecord,
   QuickBaseApiResponse,
-  QuickBaseConfig
+  QuickBaseConfig,
+  QuickBasePipeline,
+  QuickBasePipelineDetail,
+  QuickBasePipelineActivity
 } from '../src/types/quickbase';
 
 describe('QuickBase Types - Schema Validation', () => {
@@ -312,6 +315,82 @@ describe('QuickBase Types - Schema Validation', () => {
         userToken: 'token123'
       };
       expect(() => QuickBaseConfig.parse(config)).toThrow();
+    });
+  });
+});
+
+describe('Pipeline Types - Schema Validation', () => {
+  describe('QuickBasePipeline', () => {
+    it('should validate a minimal pipeline (id + name only)', () => {
+      const result = QuickBasePipeline.parse({ id: 6721062615859200, name: 'Test Pipeline' });
+      expect(result.id).toBe(6721062615859200);
+      expect(result.name).toBe('Test Pipeline');
+    });
+
+    it('should accept a string pipeline id (future-proofing for IDs > MAX_SAFE_INTEGER)', () => {
+      const result = QuickBasePipeline.parse({ id: '9999999999999999', name: 'String ID Pipeline' });
+      expect(result.id).toBe('9999999999999999');
+    });
+
+    it('should validate a full pipeline object', () => {
+      const pipeline = {
+        id: 123,
+        name: 'Full Pipeline',
+        description: 'A description',
+        type: 'automation',
+        is_enabled: true,
+        is_editable: false,
+        channels: ['quickbase'],
+        tag_ids: [1, 2],
+        qb_realm_id: 193513,
+        qb_user_id: 62632639,
+        qb_user_email: 'it@example.com',
+        created_at: '2025-09-16T21:07:16Z',
+        updated_at: '2026-05-05T10:47:46Z',
+        edited_at: '2026-05-05T10:47:46Z'
+      };
+      const result = QuickBasePipeline.parse(pipeline);
+      expect(result.channels).toEqual(['quickbase']);
+      expect(result.qb_user_id).toBe(62632639);
+    });
+
+    it('should reject a pipeline with no id', () => {
+      expect(() => QuickBasePipeline.parse({ name: 'No ID' })).toThrow();
+    });
+  });
+
+  describe('QuickBasePipelineDetail', () => {
+    it('should validate with tree field', () => {
+      const detail = {
+        id: 456,
+        name: 'Detail Pipeline',
+        tree: { nodes: [], edges: [] },
+        is_valid: true,
+        state: 'active'
+      };
+      const result = QuickBasePipelineDetail.parse(detail);
+      expect(result.is_valid).toBe(true);
+      expect(result.tree).toEqual({ nodes: [], edges: [] });
+    });
+  });
+
+  describe('QuickBasePipelineActivity', () => {
+    it('should validate an activity entry', () => {
+      const activity = {
+        pipeline_id: 789,
+        type: 'run',
+        message: 'Pipeline executed successfully',
+        created_at: '2026-05-05T10:00:00Z',
+        run_id: 'abc-123'
+      };
+      const result = QuickBasePipelineActivity.parse(activity);
+      expect(result.type).toBe('run');
+      expect(result.run_id).toBe('abc-123');
+    });
+
+    it('should allow all fields to be optional', () => {
+      const result = QuickBasePipelineActivity.parse({});
+      expect(result).toEqual({});
     });
   });
 });

@@ -19,6 +19,11 @@ import {
   CreateNotificationSchema,
   ListNotificationsSchema,
   DeleteNotificationSchema,
+  ListPipelinesSchema,
+  GetPipelineSchema,
+  GetPipelineActivitySchema,
+  FindPipelineUsersSchema,
+  StartImpersonationSchema,
   quickbaseTools
 } from '../src/tools/index';
 
@@ -967,6 +972,109 @@ describe('Tool Definitions', () => {
           choices: tooManyChoices
         });
       }).toThrow();
+    });
+  });
+});
+
+describe('Pipeline Tool Schemas', () => {
+  const APP_ID = 'brcf2n7tq';
+
+  describe('ListPipelinesSchema', () => {
+    it('parses with defaults', () => {
+      const result = ListPipelinesSchema.parse({ appId: APP_ID });
+      expect(result.appId).toBe(APP_ID);
+      expect(result.pageNumber).toBe(1);
+      expect(result.pageSize).toBe(25);
+      expect(result.realmWide).toBe(false);
+    });
+
+    it('accepts all optional fields', () => {
+      const result = ListPipelinesSchema.parse({
+        appId: APP_ID,
+        pageNumber: 3,
+        pageSize: 50,
+        realmWide: true,
+        impersonateUserId: '62913114'
+      });
+      expect(result.realmWide).toBe(true);
+      expect(result.impersonateUserId).toBe('62913114');
+    });
+
+    it('rejects pageSize > 100', () => {
+      expect(() => ListPipelinesSchema.parse({ appId: APP_ID, pageSize: 101 })).toThrow();
+    });
+  });
+
+  describe('GetPipelineSchema', () => {
+    it('parses valid input', () => {
+      const result = GetPipelineSchema.parse({ appId: APP_ID, pipelineId: '6721062615859200' });
+      expect(result.pipelineId).toBe('6721062615859200');
+    });
+
+    it('requires pipelineId', () => {
+      expect(() => GetPipelineSchema.parse({ appId: APP_ID })).toThrow();
+    });
+  });
+
+  describe('GetPipelineActivitySchema', () => {
+    it('parses with minimal input', () => {
+      const result = GetPipelineActivitySchema.parse({ appId: APP_ID, pipelineId: '123' });
+      expect(result.pipelineId).toBe('123');
+      expect(result.perPage).toBe(25);
+    });
+
+    it('accepts date range and impersonation', () => {
+      const result = GetPipelineActivitySchema.parse({
+        appId: APP_ID,
+        pipelineId: '123',
+        startDate: '2026-01-01T00:00:00Z',
+        endDate: '2026-05-01T00:00:00Z',
+        perPage: 10,
+        impersonateUserId: '62913114'
+      });
+      expect(result.startDate).toBe('2026-01-01T00:00:00Z');
+    });
+  });
+
+  describe('FindPipelineUsersSchema', () => {
+    it('validates a query string', () => {
+      const result = FindPipelineUsersSchema.parse({ appId: APP_ID, query: 'cmartin' });
+      expect(result.query).toBe('cmartin');
+    });
+
+    it('rejects empty query', () => {
+      expect(() => FindPipelineUsersSchema.parse({ appId: APP_ID, query: '' })).toThrow();
+    });
+  });
+
+  describe('StartImpersonationSchema', () => {
+    it('validates a QB user ID', () => {
+      const result = StartImpersonationSchema.parse({ appId: APP_ID, qbUserId: '62913114' });
+      expect(result.qbUserId).toBe('62913114');
+    });
+
+    it('requires qbUserId', () => {
+      expect(() => StartImpersonationSchema.parse({ appId: APP_ID })).toThrow();
+    });
+  });
+
+  describe('quickbaseTools list', () => {
+    it('includes all 6 pipeline tools', () => {
+      const names = quickbaseTools.map(t => t.name);
+      expect(names).toContain('quickbase_list_pipelines');
+      expect(names).toContain('quickbase_get_pipeline');
+      expect(names).toContain('quickbase_get_pipeline_activity');
+      expect(names).toContain('quickbase_find_pipeline_users');
+      expect(names).toContain('quickbase_start_impersonation');
+      expect(names).toContain('quickbase_end_impersonation');
+    });
+
+    it('all pipeline tool descriptions contain [UNOFFICIAL API]', () => {
+      const pipelineTools = quickbaseTools.filter(t => t.name.includes('pipeline') || t.name.includes('impersonation'));
+      expect(pipelineTools.length).toBeGreaterThan(0);
+      for (const tool of pipelineTools) {
+        expect(tool.description).toContain('[UNOFFICIAL API');
+      }
     });
   });
 });

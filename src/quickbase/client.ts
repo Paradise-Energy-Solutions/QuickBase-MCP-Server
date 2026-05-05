@@ -1,5 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions } from '../types/quickbase.js';
+import { RelayClient } from '../relay/server.js';
 import { envFlag } from '../utils/env.js';
 import { formatErrorForLog } from '../utils/errors.js';
 
@@ -7,6 +9,7 @@ export class QuickBaseClient {
   private axios: AxiosInstance;
   private config: QuickBaseConfig;
   private logApi: boolean;
+  private relayClient: RelayClient | null = null;
 
   private static extractCreatedRecordIds(responseData: any): number[] {
     const normalizeIds = (ids: unknown[]): number[] =>
@@ -997,4 +1000,142 @@ export class QuickBaseClient {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&apos;');
   }
-} 
+
+  // ========== RELAY CLIENT ==========
+
+  /** Inject the relay client after construction (avoids circular dependency). */
+  setRelayClient(relay: RelayClient): void {
+    this.relayClient = relay;
+  }
+
+  private requireRelay(): RelayClient {
+    if (!this.relayClient) {
+      throw new Error('Pipeline relay client is not configured. Ensure the relay server started successfully.');
+    }
+    return this.relayClient;
+  }
+
+  /**
+   * Unwrap a relay result, throwing a descriptive McpError on non-2xx status or
+   * network-level errors (status === 0). Keeps all pipeline methods DRY.
+   */
+  private unwrapRelayResult(result: { status: number; data: unknown; error?: string }): unknown {
+    if (result.error || result.status === 0 || result.status >= 400) {
+      const detail = result.error
+        ?? (result.data != null ? JSON.stringify(result.data) : 'no details returned');
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Pipeline API error (HTTP ${result.status}): ${detail}`
+      );
+    }
+    return result.data;
+  }
+
+  // ========== PIPELINE METHODS (Unofficial API — may break without notice) ==========
+
+  async listPipelines(opts: {
+    pageNumber?: number;
+    pageSize?: number;
+    realmWide?: boolean;
+    impersonateUserId?: string;
+  } = {}): Promise<any> {
+    const relay = this.requireRelay();
+    const { pageNumber = 1, pageSize = 25, realmWide = false, impersonateUserId } = opts;
+
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/v2/pipelines/query/paged?pageNumber=${pageNumber}&pageSize=${pageSize}`,
+        'POST',
+        { tags: [], channels: [], users: [], searchString: '', requestRealmPipelines: realmWide }
+      );
+      return this.unwrapRelayResult(result);
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  async getPipelineDetail(pipelineId: string, impersonateUserId?: string): Promise<any> {
+    const relay = this.requireRelay();
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/designer?open=true`,
+        'GET'
+      );
+      return this.unwrapRelayResult(result);
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  async getPipelineActivity(pipelineId: string, opts: {
+    startDate?: string;
+    endDate?: string;
+    perPage?: number;
+    impersonateUserId?: string;
+  } = {}): Promise<any> {
+    const relay = this.requireRelay();
+    const { perPage = 25, impersonateUserId } = opts;
+
+    const now = Math.floor(Date.now() / 1000);
+
+    const startMs = opts.startDate ? new Date(opts.startDate).getTime() : NaN;
+    if (opts.startDate && isNaN(startMs)) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid startDate: "${opts.startDate}" is not a valid date`);
+    }
+    const endMs = opts.endDate ? new Date(opts.endDate).getTime() : NaN;
+    if (opts.endDate && isNaN(endMs)) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid endDate: "${opts.endDate}" is not a valid date`);
+    }
+
+    const start = opts.startDate ? Math.floor(startMs / 1000) : now - 7 * 86400;
+    const end = opts.endDate ? Math.floor(endMs / 1000) : now;
+
+    // Multi-value scope params must use append() — URLSearchParams constructor
+    // would merge duplicate keys into a single value, losing 'pipe' and 'poller'.
+    const qs = new URLSearchParams();
+    qs.append('start', String(start));
+    qs.append('end', String(end));
+    qs.append('scope', 'pipe');
+    qs.append('scope', 'poller');
+    qs.append('scope', 'pipeline');
+    qs.append('per_page', String(perPage));
+    qs.append('pipeline_id', pipelineId);
+    qs.append('pipeline_run_id', '');
+    qs.append('offset', '');
+
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(`/api/v2/activity?${qs.toString()}`, 'GET');
+      return this.unwrapRelayResult(result);
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  async findPipelineUsers(query: string): Promise<any> {
+    const relay = this.requireRelay();
+    const result = await relay.request(
+      `/api/realm/findmatchingusers/${encodeURIComponent(query)}`,
+      'GET'
+    );
+    return this.unwrapRelayResult(result);
+  }
+
+  async startPipelineImpersonation(qbUserId: string): Promise<any> {
+    const relay = this.requireRelay();
+    const result = await relay.request(
+      '/api/impersonation/realm/start',
+      'POST',
+      { qb_user_id: qbUserId }
+    );
+    return this.unwrapRelayResult(result);
+  }
+
+  async endPipelineImpersonation(): Promise<any> {
+    const relay = this.requireRelay();
+    const result = await relay.request('/api/impersonation/end', 'POST', {});
+    return this.unwrapRelayResult(result);
+  }
+}
