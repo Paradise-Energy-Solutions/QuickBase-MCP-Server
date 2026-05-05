@@ -879,7 +879,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_list_pipelines',
-    description: '[UNOFFICIAL API — may break without notice] List QuickBase Pipelines. Requires the QB Pipeline Relay bookmarklet to be active in your browser (visit http://localhost:3737/setup). By default returns only pipelines owned by the logged-in user; set realmWide=true to list all realm pipelines (admin only).',
+    description: '[UNOFFICIAL API — may break without notice] List QuickBase Pipelines. Requires the QB Pipeline Relay bookmarklet to be active in your browser. First-time setup: http://localhost:3737/setup (port configurable via QB_RELAY_PORT in .env). By default returns only pipelines owned by the logged-in user; set realmWide=true to list all realm pipelines (admin only).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -894,7 +894,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_get_pipeline',
-    description: '[UNOFFICIAL API — may break without notice] Get the full definition (JSON tree) of a QuickBase Pipeline by its numeric ID. Requires the QB Pipeline Relay bookmarklet to be active in your browser.',
+    description: '[UNOFFICIAL API — may break without notice] Get the full definition (JSON tree) of a QuickBase Pipeline by its numeric ID. Requires the QB Pipeline Relay bookmarklet to be active in your browser (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -907,7 +907,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_get_pipeline_activity',
-    description: '[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active in your browser.',
+    description: '[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active in your browser (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -923,7 +923,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_find_pipeline_users',
-    description: '[UNOFFICIAL API — may break without notice] Search for QuickBase realm users by name or email. Useful for finding user IDs to pass to impersonateUserId. Requires the QB Pipeline Relay bookmarklet to be active.',
+    description: '[UNOFFICIAL API — may break without notice] Search for QuickBase realm users by name or email. Useful for finding user IDs to pass to impersonateUserId. Requires the QB Pipeline Relay bookmarklet to be active (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -935,7 +935,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_start_impersonation',
-    description: '[UNOFFICIAL API — may break without notice] Start impersonating a QuickBase user. While active, subsequent pipeline tool calls operate as that user. Call quickbase_end_impersonation when done. Requires the QB Pipeline Relay bookmarklet to be active.',
+    description: '[UNOFFICIAL API — may break without notice] Start impersonating a QuickBase user. While active, subsequent pipeline tool calls operate as that user. Call quickbase_end_impersonation when done. Requires the QB Pipeline Relay bookmarklet to be active (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -947,7 +947,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_end_impersonation',
-    description: '[UNOFFICIAL API — may break without notice] Stop impersonating a QuickBase user and return to the default authenticated user. Requires the QB Pipeline Relay bookmarklet to be active.',
+    description: '[UNOFFICIAL API — may break without notice] Stop impersonating a QuickBase user and return to the default authenticated user. Requires the QB Pipeline Relay bookmarklet to be active (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {},
