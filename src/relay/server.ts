@@ -162,8 +162,9 @@ export class RelayClient {
       '',
       'To activate it:',
       `1. Visit http://localhost:${this.port}/setup in your browser for first-time setup (drag the bookmarklet to your bookmarks toolbar).`,
-      '2. Navigate to any QuickBase page — you must be logged in.',
+      '2. Navigate to the QuickBase Pipelines dashboard (the bookmarklet only works from that page).',
       '3. Click the "QB Pipeline Relay" bookmarklet in your toolbar.',
+      '   Direct link: https://<your-realm>/nav/main/action/pipelines/dashboard',
       '4. You will see a confirmation message. Then retry this tool.',
     ].join('\n');
   }
@@ -173,7 +174,8 @@ export class RelayClient {
       'The QuickBase Pipeline relay timed out.',
       '',
       'The browser tab running the relay may have been closed, navigated away, or gone idle.',
-      'Click the "QB Pipeline Relay" bookmarklet on your QuickBase tab to reconnect, then retry this tool.',
+      'Navigate to the QuickBase Pipelines dashboard and click the "QB Pipeline Relay" bookmarklet to reconnect, then retry this tool.',
+      '(The bookmarklet only works from the Pipelines dashboard page, not other QuickBase pages.)',
       `Setup page: http://localhost:${this.port}/setup`,
     ].join('\n');
   }
@@ -206,7 +208,7 @@ function buildSetupPage(realm: string, port: number): string {
 var B='${relayBase}';
 var PL='${pipelinesBase}';
 var T=window['PIPELINES_PAGE_TOKEN'];
-if(!T){alert('QB Pipeline Relay: Could not find PIPELINES_PAGE_TOKEN. Make sure you are on a QuickBase page.');return;}
+if(!T){alert('QB Pipeline Relay: Could not find PIPELINES_PAGE_TOKEN.\n\nNavigate to the Pipelines dashboard first:\nhttps://'+location.hostname+'/nav/main/action/pipelines/dashboard');return;}
 fetch(B+'/relay/hello',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrfToken:T,realm:location.hostname})});
 (function poll(){
 fetch(B+'/relay/pending').then(function(r){return r.status===200?r.json():null;}).then(function(req){
@@ -266,8 +268,8 @@ alert('\\u2705 QB Pipeline Relay active!');
 <div class="step">
   <div class="step-num">2</div>
   <div class="step-body">
-    <h3>Open your QuickBase tab</h3>
-    <p>Navigate to <a href="https://${realm}" target="_blank">${realm}</a> in your browser. Make sure you are already logged in.</p>
+    <h3>Open the QuickBase Pipelines dashboard</h3>
+    <p>Navigate to <a href="https://${realm}/nav/main/action/pipelines/dashboard" target="_blank">the Pipelines dashboard</a> in your browser. Make sure you are already logged in. The bookmarklet only works from this page because QuickBase only loads the Pipelines session token there.</p>
   </div>
 </div>
 
@@ -283,7 +285,7 @@ alert('\\u2705 QB Pipeline Relay active!');
   <div class="step-num">4</div>
   <div class="step-body">
     <h3>Reconnecting after a session expires</h3>
-    <p>If the relay times out (browser tab closed or navigated away), simply return to any QuickBase page and click the bookmarklet again. No need to revisit this setup page.</p>
+    <p>If the relay times out, return to the <a href="https://${realm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again. The bookmarklet requires the Pipelines page — it will not activate from other QuickBase pages.</p>
   </div>
 </div>
 
