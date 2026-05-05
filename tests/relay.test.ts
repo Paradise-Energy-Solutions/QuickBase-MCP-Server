@@ -60,7 +60,7 @@ describe('RelayClient', () => {
       } catch (err) {
         const msg = (err as McpError).message;
         expect(msg).toContain('bookmarklet');
-        expect(msg).toContain('logged in');
+        expect(msg).toContain('Pipelines dashboard');
       }
     });
   });

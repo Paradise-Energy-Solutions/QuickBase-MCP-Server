@@ -50,6 +50,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const RELAY_ACTIVE_TTL_MS = 5 * 60 * 1000; // 5 minutes since last hello
 const LONG_POLL_TIMEOUT_MS = 28_000; // hold long-poll just under the client timeout
 const MAX_BODY_BYTES = 1_048_576; // 1 MB — protect against runaway payloads
+const RETRY_DELAYS_MS = [500, 500, 1000, 1000, 2000]; // EADDRINUSE backoff — ~5 s total
 
 export class RelayClient {
   private pending: Map<string, PendingEntry> = new Map();
@@ -187,7 +188,9 @@ export class RelayClient {
    */
   shutdown(): void {
     if (this.longPollRes && !this.longPollRes.writableEnded) {
-      this.longPollRes.socket?.destroy();
+      // Use a clean 204 rather than socket.destroy() so the bookmarklet's
+      // catch path retries in 2 s (normal long-poll reconnect) rather than 5 s.
+      this.longPollRes.writeHead(204).end();
       this.longPollRes = null;
     }
     for (const [, entry] of this.pending) {
@@ -199,7 +202,10 @@ export class RelayClient {
 }
 
 function buildSetupPage(realm: string, port: number): string {
-  const pipelinesBase = `https://${realm.replace('quickbase.com', 'pipelines.quickbase.com')}`;
+  // Validate realm before interpolating into HTML to prevent latent XSS if
+  // the value ever flows from a less-trusted config source.
+  const safeRealm = realm.replace(/[^a-zA-Z0-9.-]/g, '');
+  const pipelinesBase = `https://${safeRealm.replace('quickbase.com', 'pipelines.quickbase.com')}`;
   const relayBase = `http://localhost:${port}`;
 
   // Bookmarklet source — minified inline JS
@@ -269,7 +275,7 @@ alert('\\u2705 QB Pipeline Relay active!');
   <div class="step-num">2</div>
   <div class="step-body">
     <h3>Open the QuickBase Pipelines dashboard</h3>
-    <p>Navigate to <a href="https://${realm}/nav/main/action/pipelines/dashboard" target="_blank">the Pipelines dashboard</a> in your browser. Make sure you are already logged in. The bookmarklet only works from this page because QuickBase only loads the Pipelines session token there.</p>
+    <p>Navigate to <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">the Pipelines dashboard</a> in your browser. Make sure you are already logged in. The bookmarklet only works from this page because QuickBase only loads the Pipelines session token there.</p>
   </div>
 </div>
 
@@ -285,7 +291,7 @@ alert('\\u2705 QB Pipeline Relay active!');
   <div class="step-num">4</div>
   <div class="step-body">
     <h3>Reconnecting after a session expires</h3>
-    <p>If the relay times out, return to the <a href="https://${realm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again. The bookmarklet requires the Pipelines page — it will not activate from other QuickBase pages.</p>
+    <p>If the relay times out, return to the <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again. The bookmarklet requires the Pipelines page — it will not activate from other QuickBase pages.</p>
   </div>
 </div>
 
@@ -360,10 +366,13 @@ export function startRelayServer(realm: string, port: number): RelayClient {
       return;
     }
 
-    // ── GET /relay/shutdown ──────────────────────────────────────────────────
-    // Called by a new relay instance on the same port to ask this server to
-    // release the port gracefully. Only reachable from 127.0.0.1.
-    if (req.method === 'GET' && url === '/relay/shutdown') {
+    // ── POST /relay/shutdown ─────────────────────────────────────────────────
+    // Called by a new relay instance to ask this server to release the port
+    // gracefully. Using POST (not GET) is intentional: POST requests with
+    // Content-Type:application/json trigger a CORS preflight that the
+    // realm-restricted origin check will block, preventing CSRF from arbitrary
+    // web pages. A simple GET would be triggerable by any <img> tag.
+    if (req.method === 'POST' && url === '/relay/shutdown') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
       client.shutdown();
@@ -409,7 +418,6 @@ export function startRelayServer(realm: string, port: number): RelayClient {
   });
 
   let attempt = 0;
-  const RETRY_DELAYS_MS = [500, 500, 1000, 1000, 2000]; // ~5 s total
 
   function tryListen(): void {
     server.listen(port, '127.0.0.1', () => {
@@ -430,18 +438,23 @@ export function startRelayServer(realm: string, port: number): RelayClient {
           `To fix: set QB_RELAY_PORT to an unused port in your .env file, or wait a moment and restart the server.`
         );
       } else {
-        const delay = RETRY_DELAYS_MS[attempt++];
-        const elapsed = RETRY_DELAYS_MS.slice(0, attempt).reduce((a, b) => a + b, 0);
-        console.error(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsed} ms elapsed)`);
+        const delay = RETRY_DELAYS_MS[attempt];
+        attempt++;
+        // elapsed = time already waited across previous retries (not including
+        // the current delay which hasn't started yet).
+        const elapsed = RETRY_DELAYS_MS.slice(0, attempt - 1).reduce((a, b) => a + b, 0);
+        console.error(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsed} ms elapsed so far)`);
         // On the first attempt, ask the existing relay server to shut down so
         // the port is released sooner than its natural process-exit.
         if (attempt === 1) {
           const shutdownReq = http.request(
-            { host: '127.0.0.1', port, path: '/relay/shutdown', method: 'GET', timeout: 1000 },
+            { host: '127.0.0.1', port, path: '/relay/shutdown', method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': '2' },
+              timeout: 1000 },
             (r) => { r.resume(); }
           );
           shutdownReq.on('error', () => {}); // non-QB process on this port — ignore
-          shutdownReq.end();
+          shutdownReq.end('{}');
         }
         server.close();
         setTimeout(tryListen, delay).unref();

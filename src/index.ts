@@ -516,7 +516,7 @@ class QuickBaseMCPServer {
         const annotated = {
           _viewingAs: a.impersonateUserId
             ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-            : 'logged-in browser user (pass impersonateUserId to view another user\'s pipelines; use quickbase_find_pipeline_users to look up a user ID)',
+            : 'logged-in browser user',
           ...result
         };
         return JSON.stringify(annotated, null, 2);
@@ -524,21 +524,33 @@ class QuickBaseMCPServer {
 
       quickbase_get_pipeline: async (args) => {
         const a = parseArgs('quickbase_get_pipeline', GetPipelineSchema, args);
+        const result = await getClient(a.appId).getPipelineDetail(a.pipelineId, a.impersonateUserId);
         return JSON.stringify(
-          await getClient(a.appId).getPipelineDetail(a.pipelineId, a.impersonateUserId),
+          {
+            _viewingAs: a.impersonateUserId
+              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
+              : 'logged-in browser user',
+            ...result
+          },
           null, 2
         );
       },
 
       quickbase_get_pipeline_activity: async (args) => {
         const a = parseArgs('quickbase_get_pipeline_activity', GetPipelineActivitySchema, args);
+        const result = await getClient(a.appId).getPipelineActivity(a.pipelineId, {
+          startDate: a.startDate,
+          endDate: a.endDate,
+          perPage: a.perPage,
+          impersonateUserId: a.impersonateUserId
+        });
         return JSON.stringify(
-          await getClient(a.appId).getPipelineActivity(a.pipelineId, {
-            startDate: a.startDate,
-            endDate: a.endDate,
-            perPage: a.perPage,
-            impersonateUserId: a.impersonateUserId
-          }),
+          {
+            _viewingAs: a.impersonateUserId
+              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
+              : 'logged-in browser user',
+            ...result
+          },
           null, 2
         );
       },
