@@ -327,6 +327,11 @@ describe('Pipeline Types - Schema Validation', () => {
       expect(result.name).toBe('Test Pipeline');
     });
 
+    it('should accept a string pipeline id (future-proofing for IDs > MAX_SAFE_INTEGER)', () => {
+      const result = QuickBasePipeline.parse({ id: '9999999999999999', name: 'String ID Pipeline' });
+      expect(result.id).toBe('9999999999999999');
+    });
+
     it('should validate a full pipeline object', () => {
       const pipeline = {
         id: 123,

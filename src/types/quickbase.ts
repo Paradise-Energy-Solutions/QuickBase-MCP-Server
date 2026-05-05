@@ -123,8 +123,10 @@ export type QueryOptions = z.infer<typeof QueryOptions>;
 
 // ========== PIPELINES (Unofficial API) ==========
 
+// Pipeline IDs are large integers that may exceed Number.MAX_SAFE_INTEGER in
+// future API versions, so we accept both number and string representations.
 export const QuickBasePipeline = z.object({
-  id: z.number(),
+  id: z.union([z.number(), z.string()]),
   name: z.string(),
   description: z.string().optional(),
   type: z.string().optional(),
