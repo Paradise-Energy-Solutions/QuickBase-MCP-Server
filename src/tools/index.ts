@@ -879,14 +879,14 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_list_pipelines',
-    description: '[UNOFFICIAL API — may break without notice] List QuickBase Pipelines. Requires the QB Pipeline Relay bookmarklet to be active in your browser. First-time setup: http://localhost:3737/setup (port configurable via QB_RELAY_PORT in .env). By default returns only pipelines owned by the logged-in user; set realmWide=true to list all realm pipelines (admin only).',
+    description: '[UNOFFICIAL API — may break without notice] List QuickBase Pipelines. Returns pipelines owned by the currently logged-in browser user. To list pipelines belonging to a different user, pass their QB user ID via impersonateUserId — the server handles impersonation automatically (use quickbase_find_pipeline_users to look up a user ID by name or email). Set realmWide=true to list all realm pipelines regardless of owner (admin only). Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard. First-time setup: http://localhost:3737/setup (port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {
         pageNumber: { type: 'number', description: 'Page number (default 1)' },
         pageSize: { type: 'number', description: 'Results per page (default 25)' },
-        realmWide: { type: 'boolean', description: 'If true, return all realm pipelines (requires admin). Default false.' },
-        impersonateUserId: { type: 'string', description: 'QuickBase user ID to impersonate for this request (e.g. "62913114")' }
+        realmWide: { type: 'boolean', description: 'If true, return all realm pipelines regardless of owner (requires admin). Default false.' },
+        impersonateUserId: { type: 'string', description: 'QB user ID whose pipelines to retrieve (e.g. "62913114"). The server impersonates this user automatically — your browser session is unaffected. Use quickbase_find_pipeline_users to find a user ID by name or email.' }
       },
       required: []
     }
@@ -894,12 +894,12 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_get_pipeline',
-    description: '[UNOFFICIAL API — may break without notice] Get the full definition (JSON tree) of a QuickBase Pipeline by its numeric ID. Requires the QB Pipeline Relay bookmarklet to be active in your browser (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
+    description: '[UNOFFICIAL API — may break without notice] Get the full definition (JSON tree) of a QuickBase Pipeline by its numeric ID. Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {
         pipelineId: { type: 'string', description: 'Pipeline numeric ID (e.g. "6721062615859200")' },
-        impersonateUserId: { type: 'string', description: 'QuickBase user ID to impersonate for this request' }
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' }
       },
       required: ['pipelineId']
     }
@@ -907,7 +907,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_get_pipeline_activity',
-    description: '[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active in your browser (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
+    description: '[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard (setup: http://localhost:3737/setup — port configurable via QB_RELAY_PORT in .env).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -915,7 +915,7 @@ const rawTools: Tool[] = [
         startDate: { type: 'string', description: 'ISO 8601 start date (default: 7 days ago)' },
         endDate: { type: 'string', description: 'ISO 8601 end date (default: now)' },
         perPage: { type: 'number', description: 'Results per page (default 25)' },
-        impersonateUserId: { type: 'string', description: 'QuickBase user ID to impersonate for this request' }
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' }
       },
       required: ['pipelineId']
     }

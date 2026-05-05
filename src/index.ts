@@ -507,15 +507,19 @@ class QuickBaseMCPServer {
 
       quickbase_list_pipelines: async (args) => {
         const a = parseArgs('quickbase_list_pipelines', ListPipelinesSchema, args);
-        return JSON.stringify(
-          await getClient(a.appId).listPipelines({
-            pageNumber: a.pageNumber,
-            pageSize: a.pageSize,
-            realmWide: a.realmWide,
-            impersonateUserId: a.impersonateUserId
-          }),
-          null, 2
-        );
+        const result = await getClient(a.appId).listPipelines({
+          pageNumber: a.pageNumber,
+          pageSize: a.pageSize,
+          realmWide: a.realmWide,
+          impersonateUserId: a.impersonateUserId
+        });
+        const annotated = {
+          _viewingAs: a.impersonateUserId
+            ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
+            : 'logged-in browser user (pass impersonateUserId to view another user\'s pipelines; use quickbase_find_pipeline_users to look up a user ID)',
+          ...result
+        };
+        return JSON.stringify(annotated, null, 2);
       },
 
       quickbase_get_pipeline: async (args) => {
