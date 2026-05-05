@@ -377,7 +377,8 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     res.writeHead(404).end();
   });
 
-  let retried = false;
+  let attempt = 0;
+  const RETRY_DELAYS_MS = [500, 500, 1000, 1000, 2000]; // ~5 s total
 
   function tryListen(): void {
     server.listen(port, '127.0.0.1', () => {
@@ -389,15 +390,20 @@ export function startRelayServer(realm: string, port: number): RelayClient {
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       // Port may still be in TIME_WAIT after the previous process was killed
-      // (common during MCP server restarts in VS Code). Retry once after a
-      // short delay before giving up.
-      if (retried) {
-        console.error(`Warning: QB Pipeline relay port ${port} is still in use after retry. Pipeline tools will not be available. To fix: set QB_RELAY_PORT to an unused port in your .env file, or wait a moment and restart the server.`);
+      // (common during MCP server restarts in VS Code). Back off and retry up
+      // to RETRY_DELAYS_MS.length times before giving up.
+      if (attempt >= RETRY_DELAYS_MS.length) {
+        console.error(
+          `Warning: QB Pipeline relay port ${port} is still in use after ${attempt} attempts. ` +
+          `Pipeline tools will not be available. ` +
+          `To fix: set QB_RELAY_PORT to an unused port in your .env file, or wait a moment and restart the server.`
+        );
       } else {
-        retried = true;
-        console.error(`QB Pipeline relay port ${port} busy — retrying in 1 s…`);
+        const delay = RETRY_DELAYS_MS[attempt++];
+        const elapsed = RETRY_DELAYS_MS.slice(0, attempt).reduce((a, b) => a + b, 0);
+        console.error(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsed} ms elapsed)`);
         server.close();
-        setTimeout(tryListen, 1000).unref();
+        setTimeout(tryListen, delay).unref();
       }
     } else {
       console.error(`QB Pipeline relay server error: ${err.message}`);
