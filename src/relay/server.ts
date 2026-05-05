@@ -377,18 +377,33 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     res.writeHead(404).end();
   });
 
-  server.listen(port, '127.0.0.1', () => {
-    console.error(`QB Pipeline relay server listening on http://127.0.0.1:${port}`);
-    console.error(`  Setup page: http://localhost:${port}/setup`);
-  });
+  let retried = false;
+
+  function tryListen(): void {
+    server.listen(port, '127.0.0.1', () => {
+      console.error(`QB Pipeline relay server listening on http://127.0.0.1:${port}`);
+      console.error(`  Setup page: http://localhost:${port}/setup`);
+    });
+  }
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      console.error(`Warning: QB Pipeline relay port ${port} is already in use. Pipeline tools will not be available.`);
+      // Port may still be in TIME_WAIT after the previous process was killed
+      // (common during MCP server restarts in VS Code). Retry once after a
+      // short delay before giving up.
+      if (retried) {
+        console.error(`Warning: QB Pipeline relay port ${port} is still in use after retry. Pipeline tools will not be available. To fix: set QB_RELAY_PORT to an unused port in your .env file, or wait a moment and restart the server.`);
+      } else {
+        retried = true;
+        console.error(`QB Pipeline relay port ${port} busy — retrying in 1 s…`);
+        server.close();
+        setTimeout(tryListen, 1000).unref();
+      }
     } else {
       console.error(`QB Pipeline relay server error: ${err.message}`);
     }
   });
 
+  tryListen();
   return client;
 }
