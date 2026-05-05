@@ -219,8 +219,16 @@ var B='${relayBase}';
 var PL='${pipelinesBase}';
 var T=window['PIPELINES_PAGE_TOKEN'];
 if(!T){alert('QB Pipeline Relay: Could not find PIPELINES_PAGE_TOKEN.\n\nNavigate to the Pipelines dashboard first:\nhttps://'+location.hostname+'/nav/main/action/pipelines/dashboard');return;}
-fetch(B+'/relay/hello',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrfToken:T,realm:location.hostname})});
-(function poll(){
+if(window['_qbRelayIv']){clearInterval(window['_qbRelayIv']);}
+window['_qbRelayGen']=(window['_qbRelayGen']||0)+1;
+var gen=window['_qbRelayGen'];
+var lastPoll=0;
+function hello(){T=window['PIPELINES_PAGE_TOKEN']||T;fetch(B+'/relay/hello',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrfToken:T,realm:location.hostname})}).catch(function(){});}
+hello();
+window['_qbRelayIv']=setInterval(function(){hello();if(Date.now()-lastPoll>35000)poll();},240000);
+function poll(){
+if(window['_qbRelayGen']!==gen)return;
+lastPoll=Date.now();
 fetch(B+'/relay/pending').then(function(r){return r.status===200?r.json():null;}).then(function(req){
 if(!req){setTimeout(poll,2000);return;}
 var opts={method:req.method||'GET',credentials:'include',headers:Object.assign({'X-CSRFToken':T,'Accept':'application/json'},req.headers||{})};
@@ -228,11 +236,11 @@ if(req.body&&req.method!=='GET'){opts.headers['Content-Type']='application/json'
 fetch(PL+req.path,opts).then(function(r){return r.json().then(function(d){return{status:r.status,data:d};});}).then(function(result){
 return fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(result)});
 }).then(poll).catch(function(e){
-fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:0,data:null,error:e.message})});
-poll();
+fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:0,data:null,error:e.message})}).catch(function(){}).then(poll);
 });
 }).catch(function(){setTimeout(poll,5000);});
-})();
+}
+poll();
 alert('\\u2705 QB Pipeline Relay active!');
 })();`;
 
@@ -294,8 +302,8 @@ alert('\\u2705 QB Pipeline Relay active!');
 <div class="step">
   <div class="step-num">4</div>
   <div class="step-body">
-    <h3>Reconnecting after a session expires</h3>
-    <p>If the relay times out, return to the <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again. The bookmarklet requires the Pipelines page — it will not activate from other QuickBase pages.</p>
+    <h3>Keeping the relay alive</h3>
+    <p>The bookmarklet automatically sends a keepalive every 4 minutes and will restart the polling loop if it stalls, so it should stay active indefinitely while the Pipelines tab is open. If you do need to reconnect (e.g. after closing the tab), return to the <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again.</p>
   </div>
 </div>
 
