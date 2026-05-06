@@ -317,6 +317,12 @@ const GetPipelineStepSchema = z.object({
   impersonateUserId: z.string().optional()
 });
 
+const GetPipelineYamlSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1).max(256).describe('Pipeline numeric ID'),
+  impersonateUserId: z.string().optional()
+});
+
 const GetPipelineActivitySchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   pipelineId: z.string().min(1),
@@ -934,6 +940,19 @@ const rawTools: Tool[] = [
   },
 
   {
+    name: 'quickbase_get_pipeline_yaml',
+    description: `[UNOFFICIAL API — may break without notice] Get the complete YAML definition of a QuickBase Pipeline. Returns the pipeline as a compact, human-readable YAML string — more token-efficient than quickbase_get_pipeline. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID (e.g. "6721062615859200")' },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['pipelineId']
+    }
+  },
+
+  {
     name: 'quickbase_get_pipeline_activity',
     description: `[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
     inputSchema: {
@@ -1026,5 +1045,6 @@ export {
   GetPipelineStepSchema,
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
+  GetPipelineYamlSchema,
   StartImpersonationSchema
 }; 

@@ -1059,10 +1059,12 @@ describe('Pipeline Tool Schemas', () => {
   });
 
   describe('quickbaseTools list', () => {
-    it('includes all 6 pipeline tools', () => {
+    it('includes all 8 pipeline tools', () => {
       const names = quickbaseTools.map(t => t.name);
       expect(names).toContain('quickbase_list_pipelines');
       expect(names).toContain('quickbase_get_pipeline');
+      expect(names).toContain('quickbase_get_pipeline_step');
+      expect(names).toContain('quickbase_get_pipeline_yaml');
       expect(names).toContain('quickbase_get_pipeline_activity');
       expect(names).toContain('quickbase_find_pipeline_users');
       expect(names).toContain('quickbase_start_impersonation');

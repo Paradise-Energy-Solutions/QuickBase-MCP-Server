@@ -40,6 +40,7 @@ import {
   GetPipelineStepSchema,
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
+  GetPipelineYamlSchema,
   StartImpersonationSchema
 } from './tools/index.js';
 import { AppConfig, QuickBaseConfig } from './types/quickbase.js';
@@ -551,6 +552,12 @@ class QuickBaseMCPServer {
           },
           null, 2
         );
+      },
+
+      quickbase_get_pipeline_yaml: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_yaml', GetPipelineYamlSchema, args);
+        const yaml = await getClient(a.appId).getPipelineYaml(a.pipelineId, a.impersonateUserId);
+        return yaml;
       },
 
       quickbase_get_pipeline_activity: async (args) => {

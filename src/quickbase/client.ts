@@ -1182,6 +1182,30 @@ export class QuickBaseClient {
     }
   }
 
+  /**
+   * Retrieve the YAML definition of a pipeline.
+   * Returns the pipeline as a YAML string via /api/pipeohod/{id}.
+   */
+  async getPipelineYaml(pipelineId: string, impersonateUserId?: string): Promise<string> {
+    const relay = this.requireRelay();
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/pipeohod/${encodeURIComponent(pipelineId)}`,
+        'GET',
+        undefined,
+        undefined,
+        'text'
+      );
+      if (result.status !== 200) {
+        throw new Error(`Pipeline YAML fetch failed with status ${result.status}`);
+      }
+      return result.data as string;
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
   async findPipelineUsers(query: string): Promise<any> {
     const relay = this.requireRelay();
     const result = await relay.request(
