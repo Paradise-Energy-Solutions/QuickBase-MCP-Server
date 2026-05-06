@@ -748,29 +748,47 @@ export class QuickBaseClient {
       const webhooks = events.filter((e: any) => e.type === 'webhook');
 
       // The REST /events endpoint omits webhook URL, HTTP verb, trigger event,
-      // and message format. Enrich each webhook via the legacy XML
-      // API_Webhooks_GetInfo call (best-effort: failures fall back to raw record).
-      const enriched = await Promise.all(
-        webhooks.map(async (wh: any) => {
-          const tid = tableId ?? wh.tableId;
-          const whId = wh.id ?? wh.webhookId;
-          if (!tid || !whId) return wh;
+      // and message format. Enrich via XML API_Webhooks_GetInfo (no webhookId =
+      // returns all webhooks for the table). Group by tableId so we make one XML
+      // call per table rather than one per webhook. Best-effort: XML failures
+      // leave those webhooks unenriched rather than failing the whole list.
+      const tableIds = [...new Set(
+        webhooks.map((wh: any) => (tableId ?? wh.tableId) as string | undefined)
+          .filter((t): t is string => typeof t === 'string' && t.length > 0)
+      )];
+
+      // Fetch all-webhooks XML for each table in parallel
+      const xmlByTable = new Map<string, string>();
+      await Promise.all(
+        tableIds.map(async (tid) => {
           try {
-            const xml = await this.callLegacyXmlApi(tid, 'API_Webhooks_GetInfo',
-              `\n  <webhookId>${this.escapeXml(String(whId))}</webhookId>`);
-            return {
-              ...wh,
-              url:           this.extractXmlField(xml, 'url'),
-              verb:          this.extractXmlField(xml, 'verb'),
-              messageFormat: this.extractXmlField(xml, 'messageFormat'),
-              event:         this.extractXmlField(xml, 'event'),
-            };
-          } catch {
-            return wh;
-          }
+            const xml = await this.callLegacyXmlApi(tid, 'API_Webhooks_GetInfo');
+            xmlByTable.set(tid, typeof xml === 'string' ? xml : '');
+          } catch { /* best-effort */ }
         })
       );
-      return enriched;
+
+      // Parse each <action> block from the XML and match to REST webhooks by name
+      return webhooks.map((wh: any) => {
+        const tid = tableId ?? wh.tableId;
+        const xml = tid ? xmlByTable.get(tid) : undefined;
+        if (!xml) return wh;
+
+        // Split the XML into per-action blocks and find the one matching this webhook's name
+        const blocks = xml.match(/<action>[\s\S]*?<\/action>/gi) ?? [];
+        const block = blocks.find((b: string) => {
+          const label = this.extractXmlField(b, 'label');
+          return label && label.trim() === (wh.name ?? '').trim();
+        });
+        if (!block) return wh;
+        return {
+          ...wh,
+          url:           this.extractXmlField(block, 'url'),
+          verb:          this.extractXmlField(block, 'verb'),
+          messageFormat: this.extractXmlField(block, 'messageFormat'),
+          event:         this.extractXmlField(block, 'event'),
+        };
+      });
     } catch (error) {
       console.error(`Error listing webhooks: ${formatErrorForLog(error)}`);
       throw error;
