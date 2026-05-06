@@ -1165,7 +1165,7 @@ export class QuickBaseClient {
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
       const result = await relay.request(
-        `/api/v2/pipelines/${encodeURIComponent(stepId)}`,
+        `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/pipes/${encodeURIComponent(stepId)}`,
         'GET'
       );
       return this.unwrapRelayResult(result);
