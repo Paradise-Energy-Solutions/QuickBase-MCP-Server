@@ -1164,11 +1164,19 @@ export class QuickBaseClient {
     const relay = this.requireRelay();
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
-      const result = await relay.request(
-        `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/pipes/${encodeURIComponent(stepId)}`,
-        'GET'
-      );
-      return this.unwrapRelayResult(result);
+      const [fieldsResult, tablesResult] = await Promise.all([
+        relay.request(
+          `/api/pipelines/${encodeURIComponent(pipelineId)}/pipes/${encodeURIComponent(stepId)}/select/export_fields`,
+          'GET'
+        ),
+        relay.request(
+          `/api/pipelines/${encodeURIComponent(pipelineId)}/pipes/${encodeURIComponent(stepId)}/select/table`,
+          'GET'
+        ),
+      ]);
+      const fields = this.unwrapRelayResult(fieldsResult);
+      const tables = this.unwrapRelayResult(tablesResult);
+      return { fields, tables };
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
