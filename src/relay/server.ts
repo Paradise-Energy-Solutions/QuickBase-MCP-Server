@@ -58,9 +58,11 @@ export class RelayClient {
   private longPollRes: http.ServerResponse | null = null;
   private helloState: HelloState | null = null;
   private port: number;
+  private realm: string;
 
-  constructor(port: number) {
+  constructor(port: number, realm: string = "<your-realm>") {
     this.port = port;
+    this.realm = realm;
   }
 
   /** Called by the relay HTTP server when the bookmarklet POSTs /relay/hello */
@@ -169,7 +171,7 @@ export class RelayClient {
       `1. Visit http://localhost:${this.port}/setup in your browser for first-time setup (drag the bookmarklet to your bookmarks toolbar).`,
       '2. Navigate to the QuickBase Pipelines dashboard (the bookmarklet only works from that page).',
       '3. Click the "QB Pipeline Relay" bookmarklet in your toolbar.',
-      '   Direct link: https://<your-realm>/nav/main/action/pipelines/dashboard',
+      `   Direct link: https://${this.realm}/nav/main/action/pipelines/dashboard`,
       '4. You will see a confirmation message. Then retry this tool.',
     ].join('\n');
   }
@@ -356,7 +358,7 @@ function isOriginAllowed(origin: string | undefined, allowedOrigin: string): boo
 }
 
 export function startRelayServer(realm: string, port: number): RelayClient {
-  const client = new RelayClient(port);
+  const client = new RelayClient(port, realm);
   const allowedOrigin = `https://${realm}`;
 
   const server = http.createServer(async (req, res) => {

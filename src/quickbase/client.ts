@@ -1038,9 +1038,11 @@ export class QuickBaseClient {
     pageSize?: number;
     realmWide?: boolean;
     impersonateUserId?: string;
+    /** Suggestion #5: client-side filter — return only pipelines whose trigger table ID matches. */
+    filterByTableId?: string;
   } = {}): Promise<any> {
     const relay = this.requireRelay();
-    const { pageNumber = 1, pageSize = 25, realmWide = false, impersonateUserId } = opts;
+    const { pageNumber = 1, pageSize = 25, realmWide = false, impersonateUserId, filterByTableId } = opts;
 
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
@@ -1049,7 +1051,43 @@ export class QuickBaseClient {
         'POST',
         { tags: [], channels: [], users: [], searchString: '', requestRealmPipelines: realmWide }
       );
-      return this.unwrapRelayResult(result);
+      const data = this.unwrapRelayResult(result) as Record<string, unknown>;
+
+      // Suggestion #4: annotate cross-user pipelines when realmWide is used
+      if (realmWide && Array.isArray(data?.pipelines)) {
+        const pipelines = data.pipelines as Record<string, unknown>[];
+        const ownerIds = new Set<string>();
+        for (const p of pipelines) {
+          const ownerId = String(p['ownerId'] ?? p['owner_id'] ?? p['userId'] ?? p['user_id'] ?? '');
+          if (ownerId && ownerId !== 'undefined') ownerIds.add(ownerId);
+        }
+        if (ownerIds.size > 0) {
+          (data as any)._impersonationHint =
+            `These results include pipelines from multiple owners (IDs: ${[...ownerIds].join(', ')}). ` +
+            `To access pipelines belonging to another user, pass impersonateUserId with their QB user ID. ` +
+            `Use quickbase_find_pipeline_users to look up a user ID by name or email.`;
+        }
+      }
+
+      // Suggestion #5: client-side filter by trigger table ID
+      if (filterByTableId && Array.isArray(data?.pipelines)) {
+        const before = (data.pipelines as unknown[]).length;
+        (data as any).pipelines = (data.pipelines as Record<string, unknown>[]).filter(p => {
+          const tableId =
+            (p['triggerTableId'] as string | undefined) ??
+            (p['trigger_table_id'] as string | undefined) ??
+            ((p['trigger'] as any)?.tableId as string | undefined) ??
+            ((p['trigger'] as any)?.table_id as string | undefined) ??
+            null;
+          return tableId === filterByTableId;
+        });
+        (data as any)._filterNote =
+          `Filtered from ${before} to ${(data as any).pipelines.length} pipelines matching trigger table "${filterByTableId}". ` +
+          `If no results appear, the list API may not expose trigger table IDs — ` +
+          `use quickbase_get_pipeline on individual pipeline IDs to inspect their trigger tables directly.`;
+      }
+
+      return data;
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
@@ -1063,7 +1101,9 @@ export class QuickBaseClient {
         `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/designer?open=true`,
         'GET'
       );
-      return this.unwrapRelayResult(result);
+      const tree = this.unwrapRelayResult(result) as Record<string, unknown>;
+      // Suggestion #1: surface trigger summary at the top level
+      return { _trigger: extractTriggerInfo(tree), ...tree };
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
@@ -1074,9 +1114,11 @@ export class QuickBaseClient {
     endDate?: string;
     perPage?: number;
     impersonateUserId?: string;
+    /** Suggestion #8: narrow activity to runs triggered by a specific record. */
+    recordId?: string | number;
   } = {}): Promise<any> {
     const relay = this.requireRelay();
-    const { perPage = 25, impersonateUserId } = opts;
+    const { perPage = 25, impersonateUserId, recordId } = opts;
 
     const now = Math.floor(Date.now() / 1000);
 
@@ -1104,11 +1146,19 @@ export class QuickBaseClient {
     qs.append('pipeline_id', pipelineId);
     qs.append('pipeline_run_id', '');
     qs.append('offset', '');
+    // Suggestion #8: narrow to runs that touched a specific record
+    if (recordId != null) qs.append('record_id', String(recordId));
 
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
       const result = await relay.request(`/api/v2/activity?${qs.toString()}`, 'GET');
-      return this.unwrapRelayResult(result);
+      const data = this.unwrapRelayResult(result) as Record<string, unknown>;
+      if (Array.isArray(data?.items) && (data.items as unknown[]).length === 0) {
+        data._note = 'No activity found in the requested time window. '
+          + 'Try widening the date range or removing the recordId filter. '
+          + 'Note: a 403 (permission denied) surfaces as an McpError, not an empty list.';
+      }
+      return data;
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
@@ -1138,4 +1188,112 @@ export class QuickBaseClient {
     const result = await relay.request('/api/impersonation/end', 'POST', {});
     return this.unwrapRelayResult(result);
   }
+
+  // ── Suggestion #2 & #3: step config + trigger summary ──────────────────
+
+  /**
+   * Get the operational configuration for a single pipeline step/node.
+   * Returns the step's actual config (channel, action, field mappings, webhook
+   * URL, conditions) rather than app-wide field/table inventory.
+   */
+  async getPipelineStepConfig(pipelineId: string, stepId: string, impersonateUserId?: string): Promise<any> {
+    const relay = this.requireRelay();
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}`,
+        'GET'
+      );
+      return this.unwrapRelayResult(result);
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  /**
+   * Suggestion #3: Lightweight trigger summary — trigger table, event type,
+   * watched fields, and filter conditions without fetching the full tree.
+   */
+  async getPipelineTriggerSummary(pipelineId: string, impersonateUserId?: string): Promise<any> {
+    const relay = this.requireRelay();
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/designer?open=true`,
+        'GET'
+      );
+      const tree = this.unwrapRelayResult(result) as Record<string, unknown>;
+      return extractTriggerInfo(tree);
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  /**
+   * Suggestion #6: Batch fetch step configs for multiple steps in one call,
+   * reducing round-trips when inspecting several steps at once.
+   */
+  async batchGetPipelineSteps(
+    steps: Array<{ pipelineId: string; stepId: string }>,
+    impersonateUserId?: string
+  ): Promise<Array<{ pipelineId: string; stepId: string; config?: unknown; error?: string }>> {
+    const relay = this.requireRelay();
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const results = await Promise.all(
+        steps.map(async ({ pipelineId, stepId }) => {
+          try {
+            const result = await relay.request(
+              `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}`,
+              'GET'
+            );
+            return { pipelineId, stepId, config: this.unwrapRelayResult(result) };
+          } catch (err) {
+            return { pipelineId, stepId, error: err instanceof Error ? err.message : String(err) };
+          }
+        })
+      );
+      return results;
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+}
+
+/**
+ * Extract a concise trigger summary from the raw pipeline designer tree.
+ * The QB pipeline tree stores trigger info in various shapes depending on
+ * channel type; this helper normalises the most common ones.
+ */
+function extractTriggerInfo(tree: Record<string, unknown>): Record<string, unknown> {
+  // Shape 1: top-level trigger object
+  if (tree['trigger'] && typeof tree['trigger'] === 'object') {
+    return tree['trigger'] as Record<string, unknown>;
+  }
+  // Shape 2: nodes/steps array — find the node with type containing 'trigger'
+  const nodes = (tree['nodes'] ?? tree['steps'] ?? []) as Record<string, unknown>[];
+  const triggerNode = nodes.find(n =>
+    String(n['type'] ?? '').toLowerCase().includes('trigger') ||
+    String(n['nodeType'] ?? '').toLowerCase().includes('trigger') ||
+    String(n['role'] ?? '') === 'trigger'
+  );
+  if (triggerNode) {
+    return {
+      table: triggerNode['tableId'] ?? triggerNode['table_id'] ?? null,
+      event: triggerNode['event'] ?? triggerNode['triggerType'] ?? null,
+      fields: triggerNode['fields'] ?? triggerNode['watchedFields'] ?? null,
+      condition: triggerNode['condition'] ?? triggerNode['filter'] ?? null,
+      _raw: triggerNode,
+    };
+  }
+  // Shape 3: flat trigger fields at tree root
+  if (tree['triggerTableId'] ?? tree['triggerType']) {
+    return {
+      table: tree['triggerTableId'] ?? tree['trigger_table_id'] ?? null,
+      event: tree['triggerType'] ?? tree['trigger_type'] ?? null,
+      fields: tree['triggerFields'] ?? tree['trigger_fields'] ?? null,
+      condition: tree['triggerCondition'] ?? tree['trigger_condition'] ?? null,
+    };
+  }
+  return { _note: 'Trigger info not found in expected locations. Inspect the full pipeline tree.' };
 }

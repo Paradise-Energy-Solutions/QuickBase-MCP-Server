@@ -39,6 +39,9 @@ import {
   GetPipelineSchema,
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
+  GetPipelineStepSchema,
+  GetPipelineTriggerSummarySchema,
+  BatchGetPipelineStepsSchema,
   StartImpersonationSchema
 } from './tools/index.js';
 import { AppConfig, QuickBaseConfig } from './types/quickbase.js';
@@ -511,7 +514,8 @@ class QuickBaseMCPServer {
           pageNumber: a.pageNumber,
           pageSize: a.pageSize,
           realmWide: a.realmWide,
-          impersonateUserId: a.impersonateUserId
+          impersonateUserId: a.impersonateUserId,
+          filterByTableId: a.filterByTableId
         });
         const annotated = {
           _viewingAs: a.impersonateUserId
@@ -542,7 +546,8 @@ class QuickBaseMCPServer {
           startDate: a.startDate,
           endDate: a.endDate,
           perPage: a.perPage,
-          impersonateUserId: a.impersonateUserId
+          impersonateUserId: a.impersonateUserId,
+          recordId: a.recordId
         });
         return JSON.stringify(
           {
@@ -550,6 +555,48 @@ class QuickBaseMCPServer {
               ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
               : 'logged-in browser user',
             ...result
+          },
+          null, 2
+        );
+      },
+
+      quickbase_get_pipeline_step: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_step', GetPipelineStepSchema, args);
+        const result = await getClient(a.appId).getPipelineStepConfig(a.pipelineId, a.stepId, a.impersonateUserId);
+        return JSON.stringify(
+          {
+            _viewingAs: a.impersonateUserId
+              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
+              : 'logged-in browser user',
+            ...result
+          },
+          null, 2
+        );
+      },
+
+      quickbase_get_pipeline_trigger_summary: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_trigger_summary', GetPipelineTriggerSummarySchema, args);
+        const result = await getClient(a.appId).getPipelineTriggerSummary(a.pipelineId, a.impersonateUserId);
+        return JSON.stringify(
+          {
+            _viewingAs: a.impersonateUserId
+              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
+              : 'logged-in browser user',
+            ...result
+          },
+          null, 2
+        );
+      },
+
+      quickbase_batch_get_pipeline_steps: async (args) => {
+        const a = parseArgs('quickbase_batch_get_pipeline_steps', BatchGetPipelineStepsSchema, args);
+        const results = await getClient(a.appId).batchGetPipelineSteps(a.steps, a.impersonateUserId);
+        return JSON.stringify(
+          {
+            _viewingAs: a.impersonateUserId
+              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
+              : 'logged-in browser user',
+            steps: results
           },
           null, 2
         );
