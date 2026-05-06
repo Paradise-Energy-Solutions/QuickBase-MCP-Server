@@ -805,7 +805,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_list_webhooks',
-    description: 'List all webhooks for a table. Each returned entry includes url (the HTTPS endpoint the webhook calls), verb (HTTP method, e.g. POST/GET), event (trigger events: a=add, d=delete, m=modify), and messageFormat \u2014 in addition to the standard name, isActive, and owner fields.',
+    description: 'List all webhooks for a table. Returns name, owner, isActive, and tableId for each webhook. Note: the QB REST events API does not expose the webhook URL, HTTP verb, trigger event, or message format \u2014 use quickbase_get_webhook with a known webhookId if you need those details.',
     inputSchema: {
       type: 'object',
       properties: {
