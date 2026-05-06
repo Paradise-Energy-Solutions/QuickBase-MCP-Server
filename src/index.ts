@@ -37,6 +37,7 @@ import {
   DeleteNotificationSchema,
   ListPipelinesSchema,
   GetPipelineSchema,
+  GetPipelineStepSchema,
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
   StartImpersonationSchema
@@ -511,6 +512,8 @@ class QuickBaseMCPServer {
           pageNumber: a.pageNumber,
           pageSize: a.pageSize,
           realmWide: a.realmWide,
+          channels: a.channels,
+          tags: a.tags,
           impersonateUserId: a.impersonateUserId
         });
         const annotated = {
@@ -525,6 +528,20 @@ class QuickBaseMCPServer {
       quickbase_get_pipeline: async (args) => {
         const a = parseArgs('quickbase_get_pipeline', GetPipelineSchema, args);
         const result = await getClient(a.appId).getPipelineDetail(a.pipelineId, a.impersonateUserId);
+        return JSON.stringify(
+          {
+            _viewingAs: a.impersonateUserId
+              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
+              : 'logged-in browser user',
+            ...result
+          },
+          null, 2
+        );
+      },
+
+      quickbase_get_pipeline_step: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_step', GetPipelineStepSchema, args);
+        const result = await getClient(a.appId).getPipelineStepConfig(a.pipelineId, a.stepId, a.impersonateUserId);
         return JSON.stringify(
           {
             _viewingAs: a.impersonateUserId

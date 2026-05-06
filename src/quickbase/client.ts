@@ -1001,6 +1001,16 @@ export class QuickBaseClient {
       .replace(/'/g, '&apos;');
   }
 
+  /**
+   * Extract a plain-text value from an XML element using a simple regex.
+   * Safe for flat single-occurrence text nodes; not a full XML parser.
+   */
+  private extractXmlField(xml: unknown, tag: string): string | undefined {
+    if (typeof xml !== 'string') return undefined;
+    const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, 'i'));
+    return m?.[1] ?? undefined;
+  }
+
   // ========== RELAY CLIENT ==========
 
   /** Inject the relay client after construction (avoids circular dependency). */
@@ -1023,6 +1033,12 @@ export class QuickBaseClient {
     if (result.error || result.status === 0 || result.status >= 400) {
       const detail = result.error
         ?? (result.data != null ? JSON.stringify(result.data) : 'no details returned');
+      if (result.status === 403) {
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Pipeline API returned 403 Forbidden — you do not have permission to access this resource. If it belongs to another user, pass impersonateUserId (use quickbase_find_pipeline_users to look up their ID). Detail: ${detail}`
+        );
+      }
       throw new McpError(
         ErrorCode.InternalError,
         `Pipeline API error (HTTP ${result.status}): ${detail}`
@@ -1037,17 +1053,22 @@ export class QuickBaseClient {
     pageNumber?: number;
     pageSize?: number;
     realmWide?: boolean;
+    /** Filter by QB Pipelines channel name(s), e.g. ["webhooks"] or ["quickbase"]. */
+    channels?: string[];
+    /** Filter by pipeline tag(s). */
+    tags?: string[];
     impersonateUserId?: string;
   } = {}): Promise<any> {
     const relay = this.requireRelay();
-    const { pageNumber = 1, pageSize = 25, realmWide = false, impersonateUserId } = opts;
+    const { pageNumber = 1, pageSize = 25, realmWide = false,
+             channels = [], tags = [], impersonateUserId } = opts;
 
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
       const result = await relay.request(
         `/api/v2/pipelines/query/paged?pageNumber=${pageNumber}&pageSize=${pageSize}`,
         'POST',
-        { tags: [], channels: [], users: [], searchString: '', requestRealmPipelines: realmWide }
+        { tags, channels, users: [], searchString: '', requestRealmPipelines: realmWide }
       );
       return this.unwrapRelayResult(result);
     } finally {
@@ -1108,6 +1129,35 @@ export class QuickBaseClient {
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
       const result = await relay.request(`/api/v2/activity?${qs.toString()}`, 'GET');
+      const data = this.unwrapRelayResult(result) as Record<string, unknown>;
+      if (Array.isArray(data?.items) && (data.items as unknown[]).length === 0) {
+        data._note = 'No activity found in the requested time window. '
+          + 'Try widening the date range. '
+          + 'Note: a 403 (permission denied) surfaces as an McpError, not an empty list.';
+      }
+      return data;
+    } finally {
+      if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
+    }
+  }
+
+  /**
+   * Fetch the full step configuration for a single pipeline node.
+   *
+   * The standard `getPipelineDetail` (designer) endpoint returns the pipeline
+   * tree with node IDs but omits step-level config (webhook URL, HTTP method,
+   * request body, headers, field mappings). This method calls the step-level
+   * endpoint directly so agents can inspect individual step settings without
+   * falling back to the activity log.
+   */
+  async getPipelineStepConfig(pipelineId: string, stepId: string, impersonateUserId?: string): Promise<any> {
+    const relay = this.requireRelay();
+    if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
+    try {
+      const result = await relay.request(
+        `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}`,
+        'GET'
+      );
       return this.unwrapRelayResult(result);
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});

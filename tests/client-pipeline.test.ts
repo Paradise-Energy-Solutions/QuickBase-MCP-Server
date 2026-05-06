@@ -322,3 +322,127 @@ describe('endPipelineImpersonation', () => {
     expect(result).toEqual({ ended: true });
   });
 });
+
+// ─── listPipelines channels/tags filter ───────────────────────────────────────
+
+describe('listPipelines channel and tag filters', () => {
+  it('passes channels array to the request body', async () => {
+    const { client, relay } = makeClient();
+    await client.listPipelines({ channels: ['webhooks'] });
+    expect(relay.request).toHaveBeenCalledWith(
+      expect.any(String),
+      'POST',
+      expect.objectContaining({ channels: ['webhooks'] })
+    );
+  });
+
+  it('passes tags array to the request body', async () => {
+    const { client, relay } = makeClient();
+    await client.listPipelines({ tags: ['production'] });
+    expect(relay.request).toHaveBeenCalledWith(
+      expect.any(String),
+      'POST',
+      expect.objectContaining({ tags: ['production'] })
+    );
+  });
+
+  it('defaults channels and tags to empty arrays when omitted', async () => {
+    const { client, relay } = makeClient();
+    await client.listPipelines();
+    expect(relay.request).toHaveBeenCalledWith(
+      expect.any(String),
+      'POST',
+      expect.objectContaining({ channels: [], tags: [] })
+    );
+  });
+});
+
+// ─── unwrapRelayResult 403 ───────────────────────────────────────────────────
+
+describe('unwrapRelayResult 403 handling', () => {
+  it('throws McpError with impersonation hint on 403', async () => {
+    const relay = makeMockRelay();
+    relay.request.mockResolvedValueOnce({ status: 403, data: { message: 'Forbidden' } });
+    const { client } = makeClient(relay);
+    await expect(client.listPipelines()).rejects.toMatchObject({
+      message: expect.stringMatching(/403 Forbidden/i),
+    });
+  });
+
+  it('403 error message mentions impersonateUserId', async () => {
+    const relay = makeMockRelay();
+    relay.request.mockResolvedValueOnce({ status: 403, data: null });
+    const { client } = makeClient(relay);
+    await expect(client.listPipelines()).rejects.toMatchObject({
+      message: expect.stringContaining('impersonateUserId'),
+    });
+  });
+});
+
+// ─── getPipelineActivity empty-result annotation ──────────────────────────────
+
+describe('getPipelineActivity empty-result annotation', () => {
+  it('adds _note when items array is empty', async () => {
+    const { client, relay } = makeClient();
+    relay.request.mockResolvedValueOnce({ status: 200, data: { items: [], total: 0 } });
+    const result: any = await client.getPipelineActivity('1');
+    expect(result._note).toMatch(/No activity found/i);
+    expect(result.items).toEqual([]);
+  });
+
+  it('does NOT add _note when items are present', async () => {
+    const { client, relay } = makeClient();
+    relay.request.mockResolvedValueOnce({ status: 200, data: { items: [{ id: 'run1' }], total: 1 } });
+    const result: any = await client.getPipelineActivity('1');
+    expect(result._note).toBeUndefined();
+  });
+});
+
+// ─── getPipelineStepConfig ────────────────────────────────────────────────────
+
+describe('getPipelineStepConfig', () => {
+  it('calls the step endpoint with pipelineId and stepId URL-encoded', async () => {
+    const { client, relay } = makeClient();
+    await client.getPipelineStepConfig('6721062615859200', 'node_abc123');
+    expect(relay.request).toHaveBeenCalledWith(
+      '/api/v2/pipelines/6721062615859200/steps/node_abc123',
+      'GET'
+    );
+  });
+
+  it('URL-encodes special characters in both IDs', async () => {
+    const { client, relay } = makeClient();
+    await client.getPipelineStepConfig('abc/def', 'step/xyz');
+    const [path] = relay.request.mock.calls[0];
+    expect(path).toContain('abc%2Fdef');
+    expect(path).toContain('step%2Fxyz');
+  });
+
+  it('wraps with impersonation when impersonateUserId provided', async () => {
+    const relay = makeMockRelay();
+    relay.request
+      .mockResolvedValueOnce({ status: 200, data: {} })          // start
+      .mockResolvedValueOnce({ status: 200, data: { step: 1 } }) // step fetch
+      .mockResolvedValueOnce({ status: 200, data: {} });          // end
+    const { client } = makeClient(relay);
+    await client.getPipelineStepConfig('123', 'step1', '62913114');
+    expect(relay.request.mock.calls[0][0]).toBe('/api/impersonation/realm/start');
+    expect(relay.request.mock.calls[2][0]).toBe('/api/impersonation/end');
+  });
+
+  it('returns step data on success', async () => {
+    const relay = makeMockRelay();
+    const stepData = { id: 'node_abc', channel: 'webhooks', config: { url: 'https://example.com', method: 'POST' } };
+    relay.request.mockResolvedValueOnce({ status: 200, data: stepData });
+    const { client } = makeClient(relay);
+    const result = await client.getPipelineStepConfig('1', 'node_abc');
+    expect(result).toEqual(stepData);
+  });
+
+  it('throws McpError on 404', async () => {
+    const relay = makeMockRelay();
+    relay.request.mockResolvedValueOnce({ status: 404, data: { error: 'not found' } });
+    const { client } = makeClient(relay);
+    await expect(client.getPipelineStepConfig('1', 'bad_id')).rejects.toBeInstanceOf(McpError);
+  });
+});

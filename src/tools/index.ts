@@ -299,12 +299,21 @@ const ListPipelinesSchema = z.object({
   pageNumber: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(25),
   realmWide: z.boolean().default(false),
+  channels: z.array(z.string()).optional().describe('Filter by pipeline channel name(s), e.g. ["webhooks"] or ["quickbase"].'),
+  tags: z.array(z.string()).optional().describe('Filter by pipeline tag(s).'),
   impersonateUserId: z.string().optional()
 });
 
 const GetPipelineSchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   pipelineId: z.string().min(1),
+  impersonateUserId: z.string().optional()
+});
+
+const GetPipelineStepSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1).describe('Pipeline ID (from list_pipelines)'),
+  stepId: z.string().min(1).describe('Step/node ID (from get_pipeline nodes array)'),
   impersonateUserId: z.string().optional()
 });
 
@@ -796,7 +805,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_list_webhooks',
-    description: 'List all webhooks for a table',
+    description: 'List all webhooks for a table. Each returned entry includes url (the HTTPS endpoint the webhook calls), verb (HTTP method, e.g. POST/GET), event (trigger events: a=add, d=delete, m=modify), and messageFormat \u2014 in addition to the standard name, isActive, and owner fields.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1000,6 +1009,7 @@ export {
   DeleteNotificationSchema,
   ListPipelinesSchema,
   GetPipelineSchema,
+  GetPipelineStepSchema,
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
   StartImpersonationSchema
