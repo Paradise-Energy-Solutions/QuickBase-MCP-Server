@@ -299,8 +299,8 @@ const ListPipelinesSchema = z.object({
   pageNumber: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(25),
   realmWide: z.boolean().default(false),
-  channels: z.array(z.string()).optional().describe('Filter by pipeline channel name(s), e.g. ["webhooks"] or ["quickbase"].'),
-  tags: z.array(z.string()).optional().describe('Filter by pipeline tag(s).'),
+  channels: z.array(z.string().max(128)).max(50).optional().describe('Filter by QB Pipelines channel type(s), e.g. ["webhooks"] or ["quickbase"]'),
+  tags: z.array(z.string().max(128)).max(50).optional().describe('Filter by pipeline tag(s)'),
   impersonateUserId: z.string().optional()
 });
 
@@ -312,8 +312,8 @@ const GetPipelineSchema = z.object({
 
 const GetPipelineStepSchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
-  pipelineId: z.string().min(1).describe('Pipeline ID (from list_pipelines)'),
-  stepId: z.string().min(1).describe('Step/node ID (from get_pipeline nodes array)'),
+  pipelineId: z.string().min(1).max(256).describe('Pipeline numeric ID (from list_pipelines)'),
+  stepId: z.string().min(1).max(256).describe('Step/node ID (from get_pipeline nodes array)'),
   impersonateUserId: z.string().optional()
 });
 

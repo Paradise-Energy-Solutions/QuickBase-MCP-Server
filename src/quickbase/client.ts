@@ -1005,10 +1005,18 @@ export class QuickBaseClient {
    * Extract a plain-text value from an XML element using a simple regex.
    * Safe for flat single-occurrence text nodes; not a full XML parser.
    */
+  /**
+   * Extract a plain-text value from an XML element using a simple regex.
+   * Safe for flat single-occurrence text nodes; not a full XML parser.
+   *
+   * The `tag` parameter is escaped before being embedded in the RegExp so
+   * that callers cannot accidentally (or maliciously) inject regex syntax.
+   */
   private extractXmlField(xml: unknown, tag: string): string | undefined {
     if (typeof xml !== 'string') return undefined;
-    const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, 'i'));
-    return m?.[1] ?? undefined;
+    const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\\$&');
+    const m = xml.match(new RegExp(`<${escapedTag}[^>]*>([^<]*)</${escapedTag}>`, 'i'));
+    return m?.[1];
   }
 
   // ========== RELAY CLIENT ==========

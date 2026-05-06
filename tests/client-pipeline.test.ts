@@ -445,4 +445,21 @@ describe('getPipelineStepConfig', () => {
     const { client } = makeClient(relay);
     await expect(client.getPipelineStepConfig('1', 'bad_id')).rejects.toBeInstanceOf(McpError);
   });
+
+  it('always ends impersonation even when the step request fails', async () => {
+    const relay = makeMockRelay();
+    relay.request
+      .mockResolvedValueOnce({ status: 200, data: {} })   // start
+      .mockResolvedValueOnce({ status: 500, data: 'error' }) // step fetch — throws
+      .mockResolvedValueOnce({ status: 200, data: {} });   // end
+    const { client } = makeClient(relay);
+
+    await expect(
+      client.getPipelineStepConfig('123', 'step1', '62913114')
+    ).rejects.toBeInstanceOf(McpError);
+
+    // endPipelineImpersonation must be called regardless of step fetch failure
+    expect(relay.request).toHaveBeenCalledTimes(3);
+    expect(relay.request.mock.calls[2][0]).toBe('/api/impersonation/end');
+  });
 });
