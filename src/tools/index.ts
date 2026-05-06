@@ -920,6 +920,20 @@ const rawTools: Tool[] = [
   },
 
   {
+    name: 'quickbase_get_pipeline_step',
+    description: `[UNOFFICIAL API — may break without notice] Get the configuration of a specific step/node within a QuickBase Pipeline. Use quickbase_get_pipeline first to retrieve the node IDs from the pipeline tree, then pass one here to inspect its settings. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID' },
+        stepId: { type: 'string', description: 'Step/node numeric ID (from the nodes array returned by quickbase_get_pipeline)' },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['pipelineId', 'stepId']
+    }
+  },
+
+  {
     name: 'quickbase_get_pipeline_activity',
     description: `[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
     inputSchema: {
