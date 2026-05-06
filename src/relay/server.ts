@@ -218,7 +218,7 @@ function buildSetupPage(realm: string, port: number): string {
 var B='${relayBase}';
 var PL='${pipelinesBase}';
 var T=window['PIPELINES_PAGE_TOKEN'];
-if(!T){alert('QB Pipeline Relay: Could not find PIPELINES_PAGE_TOKEN.\n\nNavigate to the Pipelines dashboard first:\nhttps://'+location.hostname+'/nav/main/action/pipelines/dashboard');return;}
+if(!T){alert('QB Pipeline Relay: Could not find PIPELINES_PAGE_TOKEN.\\n\\nNavigate to the Pipelines dashboard first:\\nhttps://'+location.hostname+'/nav/main/action/pipelines/dashboard');return;}
 if(window['_qbRelayIv']){clearInterval(window['_qbRelayIv']);}
 window['_qbRelayGen']=(window['_qbRelayGen']||0)+1;
 var gen=window['_qbRelayGen'];
