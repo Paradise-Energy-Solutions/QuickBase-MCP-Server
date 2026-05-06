@@ -746,9 +746,31 @@ export class QuickBaseClient {
       const response = await this.axios.get(`/apps/${this.config.appId}/events`);
       const events: any[] = Array.isArray(response.data) ? response.data : [];
       const webhooks = events.filter((e: any) => e.type === 'webhook');
-      // The REST events endpoint does not expose a tableId field, so we return
-      // all app-level webhooks when no filter can be applied.
-      return webhooks;
+
+      // The REST /events endpoint omits webhook URL, HTTP verb, trigger event,
+      // and message format. Enrich each webhook via the legacy XML
+      // API_Webhooks_GetInfo call (best-effort: failures fall back to raw record).
+      const enriched = await Promise.all(
+        webhooks.map(async (wh: any) => {
+          const tid = tableId ?? wh.tableId;
+          const whId = wh.id ?? wh.webhookId;
+          if (!tid || !whId) return wh;
+          try {
+            const xml = await this.callLegacyXmlApi(tid, 'API_Webhooks_GetInfo',
+              `\n  <webhookId>${this.escapeXml(String(whId))}</webhookId>`);
+            return {
+              ...wh,
+              url:           this.extractXmlField(xml, 'url'),
+              verb:          this.extractXmlField(xml, 'verb'),
+              messageFormat: this.extractXmlField(xml, 'messageFormat'),
+              event:         this.extractXmlField(xml, 'event'),
+            };
+          } catch {
+            return wh;
+          }
+        })
+      );
+      return enriched;
     } catch (error) {
       console.error(`Error listing webhooks: ${formatErrorForLog(error)}`);
       throw error;
