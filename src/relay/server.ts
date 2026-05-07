@@ -207,6 +207,15 @@ export class RelayClient {
   }
 }
 
+/**
+ * Generates the one-time HTML setup page that walks the user through
+ * installing the bookmarklet and activating the relay.
+ *
+ * @param realm - The QuickBase realm hostname (e.g. "myorg.quickbase.com").
+ *   Only [a-zA-Z0-9.-] pass through sanitisation before interpolation.
+ * @param port - The TCP port the relay server is listening on.
+ * @returns A complete HTML document string ready to serve as text/html.
+ */
 function buildSetupPage(realm: string, port: number): string {
   // Validate realm before interpolating into HTML to prevent latent XSS if
   // the value ever flows from a less-trusted config source.
@@ -220,9 +229,17 @@ function buildSetupPage(realm: string, port: number): string {
 var B='${relayBase}';
 var PL='${pipelinesBase}';
 var T=window['PIPELINES_PAGE_TOKEN'];
-if(!T){alert('QB Pipeline Relay: Could not find PIPELINES_PAGE_TOKEN.\n\nNavigate to the Pipelines dashboard first:\nhttps://'+location.hostname+'/nav/main/action/pipelines/dashboard');return;}
-fetch(B+'/relay/hello',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrfToken:T,realm:location.hostname})});
-(function poll(){
+if(!T){alert('QB Pipeline Relay: Could not find PIPELINES_PAGE_TOKEN.\\n\\nNavigate to the Pipelines dashboard first:\\nhttps://'+location.hostname+'/nav/main/action/pipelines/dashboard');return;}
+if(window['_qbRelayIv']){clearInterval(window['_qbRelayIv']);}
+window['_qbRelayGen']=(window['_qbRelayGen']||0)+1;
+var gen=window['_qbRelayGen'];
+var lastPoll=0;
+function hello(){T=window['PIPELINES_PAGE_TOKEN']||T;fetch(B+'/relay/hello',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrfToken:T,realm:location.hostname})}).catch(function(){});}
+hello();
+window['_qbRelayIv']=setInterval(function(){hello();if(Date.now()-lastPoll>35000)poll();},240000);
+function poll(){
+if(window['_qbRelayGen']!==gen)return;
+lastPoll=Date.now();
 fetch(B+'/relay/pending').then(function(r){return r.status===200?r.json():null;}).then(function(req){
 if(!req){setTimeout(poll,2000);return;}
 var opts={method:req.method||'GET',credentials:'include',headers:Object.assign({'X-CSRFToken':T,'Accept':'application/json'},req.headers||{})};
@@ -230,11 +247,11 @@ if(req.body&&req.method!=='GET'){opts.headers['Content-Type']='application/json'
 fetch(PL+req.path,opts).then(function(r){return r.json().then(function(d){return{status:r.status,data:d};});}).then(function(result){
 return fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(result)});
 }).then(poll).catch(function(e){
-fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:0,data:null,error:e.message})});
-poll();
+fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:0,data:null,error:e.message})}).catch(function(){}).then(poll);
 });
 }).catch(function(){setTimeout(poll,5000);});
-})();
+}
+poll();
 alert('\\u2705 QB Pipeline Relay active!');
 })();`;
 
@@ -296,8 +313,8 @@ alert('\\u2705 QB Pipeline Relay active!');
 <div class="step">
   <div class="step-num">4</div>
   <div class="step-body">
-    <h3>Reconnecting after a session expires</h3>
-    <p>If the relay times out, return to the <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again. The bookmarklet requires the Pipelines page — it will not activate from other QuickBase pages.</p>
+    <h3>Keeping the relay alive</h3>
+    <p>The bookmarklet automatically sends a keepalive every 4 minutes and will restart the polling loop if it stalls, so it should stay active indefinitely while the Pipelines tab is open. If you do need to reconnect (e.g. after closing the tab), return to the <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again.</p>
   </div>
 </div>
 
@@ -314,6 +331,14 @@ fetch('/relay/status').then(r=>r.json()).then(d=>{
 </html>`;
 }
 
+/**
+ * Reads and JSON-parses the body of an incoming HTTP request.
+ * Rejects if the body exceeds MAX_BODY_BYTES or is not valid JSON.
+ * An empty body resolves to `null`.
+ *
+ * @param req - The raw Node.js incoming message to read from.
+ * @returns A Promise that resolves to the parsed JSON value.
+ */
 function readBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -336,6 +361,7 @@ function readBody(req: http.IncomingMessage): Promise<unknown> {
   });
 }
 
+/** Applies CORS response headers, restricting the allowed origin to the QB realm. */
 function cors(res: http.ServerResponse, allowedOrigin: string): void {
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -348,15 +374,38 @@ function cors(res: http.ServerResponse, allowedOrigin: string): void {
  *  - Origin matches the QB realm → bookmarklet running on the QB domain, allowed.
  *  - Any other origin  → cross-site request, denied.
  *
+ * Only `origin === undefined` is treated as a same-process call. An empty-string
+ * or `"null"` origin originates from a browser context (sandboxed iframes, file://
+ * pages) and must be rejected, not trusted.
+ *
  * This guards endpoints that mutate server state (/relay/shutdown, /relay/result)
  * against cross-site requests that bypass CORS preflight (e.g. form POSTs with
  * application/x-www-form-urlencoded).
  */
 function isOriginAllowed(origin: string | undefined, allowedOrigin: string): boolean {
-  if (origin === undefined || origin === '') return true; // same-process call
+  if (origin === undefined) return true; // no Origin header → same-process call
   return origin === allowedOrigin;
 }
 
+/** Sends a 403 Forbidden JSON response. Used on state-mutating endpoints that reject non-QB origins. */
+function sendForbidden(res: http.ServerResponse): void {
+  res.writeHead(403, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Forbidden' }));
+}
+
+/**
+ * Starts the relay HTTP server and returns the RelayClient that MCP tool handlers
+ * use to enqueue requests and await results from the bookmarklet.
+ *
+ * Binds to 127.0.0.1 only. On EADDRINUSE, backs off and retries up to
+ * RETRY_DELAYS_MS.length times, sending a shutdown probe to any occupying relay
+ * server on the first attempt.
+ *
+ * @param realm - The QuickBase realm hostname (e.g. "myorg.quickbase.com").
+ *   Used to restrict CORS and to build the setup-page URL.
+ * @param port - The TCP port to listen on.
+ * @returns The RelayClient instance; MCP tool handlers call `client.request()` on it.
+ */
 export function startRelayServer(realm: string, port: number): RelayClient {
   const client = new RelayClient(port, realm);
   const allowedOrigin = `https://${realm}`;
@@ -395,8 +444,7 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     if (req.method === 'POST' && url === '/relay/shutdown') {
       const origin = req.headers.origin as string | undefined;
       if (!isOriginAllowed(origin, allowedOrigin)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Forbidden' }));
+        sendForbidden(res);
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -432,8 +480,7 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     if (req.method === 'POST' && resultMatch) {
       const origin = req.headers.origin as string | undefined;
       if (!isOriginAllowed(origin, allowedOrigin)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Forbidden' }));
+        sendForbidden(res);
         return;
       }
       try {
@@ -450,6 +497,7 @@ export function startRelayServer(realm: string, port: number): RelayClient {
   });
 
   let attempt = 0;
+  let elapsedMs = 0; // cumulative ms already waited across previous EADDRINUSE retries
 
   function tryListen(): void {
     server.listen(port, '127.0.0.1', () => {
@@ -472,21 +520,20 @@ export function startRelayServer(realm: string, port: number): RelayClient {
       } else {
         const delay = RETRY_DELAYS_MS[attempt];
         attempt++;
-        // elapsed = time already waited across previous retries (not including
-        // the current delay which hasn't started yet).
-        const elapsed = RETRY_DELAYS_MS.slice(0, attempt - 1).reduce((a, b) => a + b, 0);
-        console.error(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsed} ms elapsed so far)`);
+        console.error(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsedMs} ms elapsed so far)`);
+        elapsedMs += delay;
         // On the first attempt, ask the existing relay server to shut down so
         // the port is released sooner than its natural process-exit.
         if (attempt === 1) {
+          const shutdownBody = '{}';
           const shutdownReq = http.request(
             { host: '127.0.0.1', port, path: '/relay/shutdown', method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Content-Length': '2' },
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(shutdownBody) },
               timeout: 1000 },
             (r) => { r.resume(); }
           );
           shutdownReq.on('error', () => {}); // non-QB process on this port — ignore
-          shutdownReq.end('{}');
+          shutdownReq.end(shutdownBody);
         }
         server.close();
         setTimeout(tryListen, delay).unref();
