@@ -299,15 +299,28 @@ const ListPipelinesSchema = z.object({
   pageNumber: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(25),
   realmWide: z.boolean().default(false),
-  channels: z.array(z.string()).optional().describe('Filter by QB Pipelines channel name(s), e.g. ["webhooks"] or ["quickbase"]'),
-  tags: z.array(z.string()).optional().describe('Filter by pipeline tag(s)'),
+  channels: z.array(z.string().max(128)).max(50).optional().describe('Filter by QB Pipelines channel type(s), e.g. ["webhooks"] or ["quickbase"]'),
+  tags: z.array(z.string().max(128)).max(50).optional().describe('Filter by pipeline tag(s)'),
   impersonateUserId: z.string().optional(),
   filterByTableId: z.string().min(1).optional().describe('Return only pipelines whose trigger table ID matches this value (client-side filter)')
 });
 
 const GetPipelineSchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
-  pipelineId: z.string().min(1).max(256),
+  pipelineId: z.string().min(1),
+  impersonateUserId: z.string().optional()
+});
+
+const GetPipelineStepSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1).max(256).describe('Pipeline numeric ID (from list_pipelines)'),
+  stepId: z.string().min(1).max(256).describe('Step/node ID (from get_pipeline nodes array)'),
+  impersonateUserId: z.string().optional()
+});
+
+const GetPipelineYamlSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1).max(256).describe('Pipeline numeric ID'),
   impersonateUserId: z.string().optional()
 });
 
@@ -324,13 +337,6 @@ const GetPipelineActivitySchema = z.object({
 const FindPipelineUsersSchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   query: z.string().min(1).max(128)
-});
-
-const GetPipelineStepSchema = z.object({
-  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
-  pipelineId: z.string().min(1).max(256).describe('Pipeline numeric ID (from quickbase_list_pipelines)'),
-  stepId: z.string().min(1).max(256).describe('Step/node ID (from quickbase_get_pipeline nodes array)'),
-  impersonateUserId: z.string().optional()
 });
 
 const GetPipelineTriggerSummarySchema = z.object({
@@ -822,7 +828,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_list_webhooks',
-    description: 'List all webhooks for a table',
+    description: 'List all webhooks for a table. Returns name, owner, isActive, and tableId for each webhook. Note: the QB REST events API does not expose the webhook URL, HTTP verb, trigger event, or message format \u2014 use quickbase_get_webhook with a known webhookId if you need those details.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -917,8 +923,6 @@ const rawTools: Tool[] = [
         pageNumber: { type: 'number', description: 'Page number (default 1)' },
         pageSize: { type: 'number', description: 'Results per page (default 25)' },
         realmWide: { type: 'boolean', description: 'If true, return all realm pipelines regardless of owner (requires admin). Default false.' },
-        channels: { type: 'array', items: { type: 'string' }, description: 'Filter by QB Pipelines channel name(s), e.g. ["webhooks"] or ["quickbase"]. Passed to the API as-is.' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'Filter by pipeline tag(s). Passed to the API as-is.' },
         impersonateUserId: { type: 'string', description: 'QB user ID whose pipelines to retrieve (e.g. "62913114"). The server impersonates this user automatically — your browser session is unaffected. Use quickbase_find_pipeline_users to find a user ID by name or email.' },
         filterByTableId: { type: 'string', description: 'Return only pipelines whose trigger table ID matches this value. Use when looking for pipelines watching a specific table.' }
       },
@@ -940,6 +944,33 @@ const rawTools: Tool[] = [
   },
 
   {
+    name: 'quickbase_get_pipeline_step',
+    description: `[UNOFFICIAL API — may break without notice] Get the configuration of a specific step/node within a QuickBase Pipeline. Use quickbase_get_pipeline first to retrieve the node IDs from the pipeline tree, then pass one here to inspect its settings. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID' },
+        stepId: { type: 'string', description: 'Step/node numeric ID (from the nodes array returned by quickbase_get_pipeline)' },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['pipelineId', 'stepId']
+    }
+  },
+
+  {
+    name: 'quickbase_get_pipeline_yaml',
+    description: `[UNOFFICIAL API — may break without notice] Get the complete YAML definition of a QuickBase Pipeline. Returns the pipeline as a compact, human-readable YAML string — more token-efficient than quickbase_get_pipeline. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID (e.g. "6721062615859200")' },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['pipelineId']
+    }
+  },
+
+  {
     name: 'quickbase_get_pipeline_activity',
     description: `[UNOFFICIAL API — may break without notice] Get the activity / run history for a QuickBase Pipeline. Requires the QB Pipeline Relay bookmarklet to be active on the Pipelines dashboard (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
     inputSchema: {
@@ -950,7 +981,8 @@ const rawTools: Tool[] = [
         endDate: { type: 'string', description: 'ISO 8601 end date (default: now)' },
         perPage: { type: 'number', description: 'Results per page (default 25)' },
         impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' },
-        recordId: { type: 'string', description: 'Filter activity to runs triggered by this specific record ID.' }      },
+        recordId: { type: 'string', description: 'Filter activity to runs triggered by this specific record ID (optional).' }
+      },
       required: ['pipelineId']
     }
   },
@@ -964,20 +996,6 @@ const rawTools: Tool[] = [
         query: { type: 'string', description: 'Name or email fragment to search for' }
       },
       required: ['query']
-    }
-  },
-
-  {
-    name: 'quickbase_get_pipeline_step',
-    description: `[UNOFFICIAL API — may break without notice] Get the operational configuration of a specific step/node within a QuickBase Pipeline (channel, action, field mappings, webhook URL, conditions). Use quickbase_get_pipeline first to get node IDs from the tree. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        pipelineId: { type: 'string', description: 'Pipeline numeric ID' },
-        stepId: { type: 'string', description: 'Step/node numeric ID (from the nodes array returned by quickbase_get_pipeline)' },
-        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Use quickbase_find_pipeline_users to look up a user ID.' }
-      },
-      required: ['pipelineId', 'stepId']
     }
   },
 
@@ -1081,9 +1099,10 @@ export {
   DeleteNotificationSchema,
   ListPipelinesSchema,
   GetPipelineSchema,
+  GetPipelineStepSchema,
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
-  GetPipelineStepSchema,
+  GetPipelineYamlSchema,
   GetPipelineTriggerSummarySchema,
   BatchGetPipelineStepsSchema,
   StartImpersonationSchema

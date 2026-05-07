@@ -532,3 +532,251 @@ describe('startRelayServer — EADDRINUSE retry', () => {
     await new Promise<void>(r => occupying.close(() => r()));
   }, 12_000);
 });
+
+// ── New unit tests: TTL expiry, long-poll replacement, extraHeaders ───────────
+
+describe('RelayClient — isActive TTL expiry', () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  it('is false after 5 minutes of inactivity (RELAY_ACTIVE_TTL_MS elapsed)', () => {
+    const client = makeClient();
+    client.receiveHello('tok', 'example.quickbase.com');
+    expect(client.isActive).toBe(true);
+    jest.advanceTimersByTime(5 * 60 * 1000 + 1); // past the 5-minute TTL
+    expect(client.isActive).toBe(false);
+  });
+
+  it('stays active when receiveResult refreshes the TTL near the boundary', () => {
+    const client = makeClient();
+    client.receiveHello('tok', 'example.quickbase.com');
+    jest.advanceTimersByTime(5 * 60 * 1000 - 1000); // 1 second before expiry
+    expect(client.isActive).toBe(true);
+    // receiveResult refreshes receivedAt before the pending-entry lookup,
+    // so even an unknown id resets the clock.
+    client.receiveResult('nonexistent-id', { status: 200, data: {} });
+    jest.advanceTimersByTime(4 * 60 * 1000); // 4 more minutes — only 4 min since refresh
+    expect(client.isActive).toBe(true);
+  });
+});
+
+describe('RelayClient — registerLongPoll() replaces stale connection', () => {
+  it('sends 204 to the previous long-poll when a new one arrives', () => {
+    const client = makeClient();
+    client.receiveHello('csrf', 'test.quickbase.com');
+    const firstRes = {
+      writableEnded: false,
+      writeHead: jest.fn().mockReturnThis(),
+      end: jest.fn(),
+    } as any;
+    const secondRes = {
+      writableEnded: false,
+      writeHead: jest.fn().mockReturnThis(),
+      end: jest.fn(),
+    } as any;
+
+    client.registerLongPoll(firstRes);
+    client.registerLongPoll(secondRes); // should close firstRes with 204
+
+    expect(firstRes.writeHead).toHaveBeenCalledWith(204);
+    expect(firstRes.end).toHaveBeenCalled();
+    // secondRes is now the active long-poll — must not have been touched
+    expect(secondRes.writeHead).not.toHaveBeenCalled();
+  });
+
+  it('does not send 204 to a previous connection that is already writableEnded', () => {
+    const client = makeClient();
+    client.receiveHello('csrf', 'test.quickbase.com');
+    const endedRes = {
+      writableEnded: true,
+      writeHead: jest.fn().mockReturnThis(),
+      end: jest.fn(),
+    } as any;
+    const newRes = {
+      writableEnded: false,
+      writeHead: jest.fn().mockReturnThis(),
+      end: jest.fn(),
+    } as any;
+
+    client.registerLongPoll(endedRes);
+    client.registerLongPoll(newRes);
+
+    expect(endedRes.writeHead).not.toHaveBeenCalled();
+  });
+});
+
+describe('RelayClient — request() extraHeaders', () => {
+  it('includes extraHeaders in the request object sent to the bookmarklet', async () => {
+    const client = makeClient();
+    client.receiveHello('csrf', 'test.quickbase.com');
+
+    let capturedReq: any;
+    const fakeRes = {
+      writableEnded: false,
+      writeHead: jest.fn().mockReturnThis(),
+      end: jest.fn((body: string) => {
+        capturedReq = JSON.parse(body);
+        client.receiveResult(capturedReq.id, { status: 200, data: {} });
+      }),
+    } as any;
+
+    client.registerLongPoll(fakeRes);
+    await client.request('/api/v2/test', 'GET', undefined, { 'X-Custom-Header': 'value-123' });
+
+    expect(capturedReq.headers).toEqual({ 'X-Custom-Header': 'value-123' });
+  });
+});
+
+// ── New integration tests: hello, status, end-to-end relay, body validation ──
+
+describe('startRelayServer — GET /relay/status', () => {
+  it('returns { active: false, realmUser: null } before any hello', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const result = await httpReq('GET', port, '/relay/status');
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toEqual({ active: false, realmUser: null });
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+
+  it('returns { active: true } after POST /relay/hello', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    await httpReq('POST', port, '/relay/hello',
+      JSON.stringify({ csrfToken: 'tok', realm: 'test.quickbase.com' }));
+
+    const result = await httpReq('GET', port, '/relay/status');
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toMatchObject({ active: true, realmUser: 'test.quickbase.com' });
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+
+  it('POST /relay/hello with missing fields returns 204 but relay stays inactive', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    // Missing realm — server still responds 204 but does not activate relay
+    const helloResult = await httpReq('POST', port, '/relay/hello',
+      JSON.stringify({ csrfToken: 'tok' }));
+    expect(helloResult.statusCode).toBe(204);
+
+    const statusResult = await httpReq('GET', port, '/relay/status');
+    expect((statusResult.body as any).active).toBe(false);
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+});
+
+describe('startRelayServer — GET /relay/pending end-to-end relay', () => {
+  it('delivers a queued request to a long-polling client and resolves the caller', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    const client = startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    // Activate the relay
+    await httpReq('POST', port, '/relay/hello',
+      JSON.stringify({ csrfToken: 'tok', realm: 'test.quickbase.com' }));
+
+    // Enqueue a relay request before the long-poll connects;
+    // it will be dispatched as soon as the poll arrives.
+    const relayPromise = client.request('/api/v2/pipelines/test', 'GET');
+
+    // Simulate the bookmarklet calling GET /relay/pending
+    const pendingResult = await httpReq('GET', port, '/relay/pending');
+    expect(pendingResult.statusCode).toBe(200);
+    expect(pendingResult.body).toMatchObject({ path: '/api/v2/pipelines/test', method: 'GET' });
+
+    // Simulate the bookmarklet POSTing the result back
+    const reqId = (pendingResult.body as any).id;
+    const resultPost = await httpReq(
+      'POST', port, `/relay/result/${reqId}`,
+      JSON.stringify({ status: 200, data: { ok: true } }),
+    );
+    expect(resultPost.statusCode).toBe(204);
+
+    // The original client.request() should now resolve
+    const resolved = await relayPromise;
+    expect(resolved).toEqual({ status: 200, data: { ok: true } });
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+});
+
+describe('startRelayServer — readBody validation', () => {
+  it('POST /relay/hello with body exceeding 1 MB is rejected by the server', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    // Build a body just over the 1 MB limit (MAX_BODY_BYTES = 1_048_576)
+    const oversizedBody = JSON.stringify({
+      csrfToken: 'x'.repeat(1_050_000),
+      realm: 'test.quickbase.com',
+    });
+
+    // The server calls req.destroy() once bytesRead > MAX_BODY_BYTES. Depending
+    // on socket flush timing the client may receive a 400 response or an
+    // ECONNRESET. Both outcomes prove the server rejected the oversized body.
+    const result = await httpReq('POST', port, '/relay/hello', oversizedBody).catch(
+      (err: Error) => {
+        const isSocketReset = err.message.includes('socket hang up') ||
+          err.message.includes('ECONNRESET');
+        if (!isSocketReset) throw err;
+        return { statusCode: 400, body: null };
+      },
+    );
+    expect(result.statusCode).toBe(400);
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+
+  it('POST /relay/hello with invalid JSON returns 400', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const result = await httpReq('POST', port, '/relay/hello', 'not-valid-json{{{');
+    expect(result.statusCode).toBe(400);
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+});
+
+describe('startRelayServer — empty-string Origin is not treated as same-process', () => {
+  it('POST /relay/shutdown with empty-string Origin header is rejected with 403', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    // An empty-value Origin header must not bypass the origin check.
+    // Only undefined (absent header) is treated as a same-process call.
+    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
+      'Origin': '',
+    });
+    expect(result.statusCode).toBe(403);
+
+    // Clean up — send without Origin header so the server actually shuts down
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+});

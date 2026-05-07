@@ -37,9 +37,10 @@ import {
   DeleteNotificationSchema,
   ListPipelinesSchema,
   GetPipelineSchema,
+  GetPipelineStepSchema,
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
-  GetPipelineStepSchema,
+  GetPipelineYamlSchema,
   GetPipelineTriggerSummarySchema,
   BatchGetPipelineStepsSchema,
   StartImpersonationSchema
@@ -545,15 +546,9 @@ class QuickBaseMCPServer {
         );
       },
 
-      quickbase_get_pipeline_activity: async (args) => {
-        const a = parseArgs('quickbase_get_pipeline_activity', GetPipelineActivitySchema, args);
-        const result = await getClient(a.appId).getPipelineActivity(a.pipelineId, {
-          startDate: a.startDate,
-          endDate: a.endDate,
-          perPage: a.perPage,
-          impersonateUserId: a.impersonateUserId,
-          recordId: a.recordId
-        });
+      quickbase_get_pipeline_step: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_step', GetPipelineStepSchema, args);
+        const result = await getClient(a.appId).getPipelineStepConfig(a.pipelineId, a.stepId, a.impersonateUserId);
         return JSON.stringify(
           {
             _viewingAs: viewingAs(a.impersonateUserId),
@@ -563,9 +558,21 @@ class QuickBaseMCPServer {
         );
       },
 
-      quickbase_get_pipeline_step: async (args) => {
-        const a = parseArgs('quickbase_get_pipeline_step', GetPipelineStepSchema, args);
-        const result = await getClient(a.appId).getPipelineStepConfig(a.pipelineId, a.stepId, a.impersonateUserId);
+      quickbase_get_pipeline_yaml: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_yaml', GetPipelineYamlSchema, args);
+        const yaml = await getClient(a.appId).getPipelineYaml(a.pipelineId, a.impersonateUserId);
+        return yaml;
+      },
+
+      quickbase_get_pipeline_activity: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_activity', GetPipelineActivitySchema, args);
+        const result = await getClient(a.appId).getPipelineActivity(a.pipelineId, {
+          startDate: a.startDate,
+          endDate: a.endDate,
+          perPage: a.perPage,
+          impersonateUserId: a.impersonateUserId,
+          recordId: a.recordId
+        });
         return JSON.stringify(
           {
             _viewingAs: viewingAs(a.impersonateUserId),

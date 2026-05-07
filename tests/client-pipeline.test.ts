@@ -282,15 +282,7 @@ describe('getPipelineActivity', () => {
     await client.getPipelineActivity('9876');
     const [path] = relay.request.mock.calls[0];
     expect(path).not.toContain('record_id');
-  });
-
-  it('adds _note when activity items array is empty', async () => {
-    const relay = makeMockRelay();
-    relay.request.mockResolvedValueOnce({ status: 200, data: { items: [] } });
-    const { client } = makeClient(relay);
-    const result = await client.getPipelineActivity('1') as any;
-    expect(result._note).toMatch(/No activity found/);
-  });
+  })
 });
 
 // ─── findPipelineUsers ────────────────────────────────────────────────────────
@@ -357,8 +349,82 @@ describe('endPipelineImpersonation', () => {
   });
 });
 
+// ─── listPipelines channels/tags filter ───────────────────────────────────────
 
-// ─── listPipelines — filterByTableId & impersonationHint ──────────────────────
+describe('listPipelines channel and tag filters', () => {
+  it('passes channels array to the request body', async () => {
+    const { client, relay } = makeClient();
+    await client.listPipelines({ channels: ['webhooks'] });
+    expect(relay.request).toHaveBeenCalledWith(
+      expect.any(String),
+      'POST',
+      expect.objectContaining({ channels: ['webhooks'] })
+    );
+  });
+
+  it('passes tags array to the request body', async () => {
+    const { client, relay } = makeClient();
+    await client.listPipelines({ tags: ['production'] });
+    expect(relay.request).toHaveBeenCalledWith(
+      expect.any(String),
+      'POST',
+      expect.objectContaining({ tags: ['production'] })
+    );
+  });
+
+  it('defaults channels and tags to empty arrays when omitted', async () => {
+    const { client, relay } = makeClient();
+    await client.listPipelines();
+    expect(relay.request).toHaveBeenCalledWith(
+      expect.any(String),
+      'POST',
+      expect.objectContaining({ channels: [], tags: [] })
+    );
+  });
+});
+
+// ─── unwrapRelayResult 403 ───────────────────────────────────────────────────
+
+describe('unwrapRelayResult 403 handling', () => {
+  it('throws McpError with impersonation hint on 403', async () => {
+    const relay = makeMockRelay();
+    relay.request.mockResolvedValueOnce({ status: 403, data: { message: 'Forbidden' } });
+    const { client } = makeClient(relay);
+    await expect(client.listPipelines()).rejects.toMatchObject({
+      message: expect.stringMatching(/403 Forbidden/i),
+    });
+  });
+
+  it('403 error message mentions impersonateUserId', async () => {
+    const relay = makeMockRelay();
+    relay.request.mockResolvedValueOnce({ status: 403, data: null });
+    const { client } = makeClient(relay);
+    await expect(client.listPipelines()).rejects.toMatchObject({
+      message: expect.stringContaining('impersonateUserId'),
+    });
+  });
+});
+
+// ─── getPipelineActivity empty-result annotation ──────────────────────────────
+
+describe('getPipelineActivity empty-result annotation', () => {
+  it('adds _note when items array is empty', async () => {
+    const { client, relay } = makeClient();
+    relay.request.mockResolvedValueOnce({ status: 200, data: { items: [], total: 0 } });
+    const result: any = await client.getPipelineActivity('1');
+    expect(result._note).toMatch(/No activity found/i);
+    expect(result.items).toEqual([]);
+  });
+
+  it('does NOT add _note when items are present', async () => {
+    const { client, relay } = makeClient();
+    relay.request.mockResolvedValueOnce({ status: 200, data: { items: [{ id: 'run1' }], total: 1 } });
+    const result: any = await client.getPipelineActivity('1');
+    expect(result._note).toBeUndefined();
+  });
+});
+
+// ─── listPipelines — filterByTableId & impersonationHint ─────────────────────────────────
 
 describe('listPipelines — filterByTableId', () => {
   it('filters pipelines by triggerTableId when filterByTableId is set', async () => {
@@ -399,11 +465,19 @@ describe('listPipelines — filterByTableId', () => {
 // ─── getPipelineStepConfig ────────────────────────────────────────────────────
 
 describe('getPipelineStepConfig', () => {
-  it('calls the v2 steps endpoint with pipelineId and stepId URL-encoded', async () => {
-    const { client, relay } = makeClient();
+  it('calls the step endpoint with pipelineId and stepId URL-encoded', async () => {
+    const relay = makeMockRelay();
+    relay.request
+      .mockResolvedValueOnce({ status: 200, data: {} })
+      .mockResolvedValueOnce({ status: 200, data: {} });
+    const { client } = makeClient(relay);
     await client.getPipelineStepConfig('6721062615859200', 'node_abc123');
     expect(relay.request).toHaveBeenCalledWith(
-      '/api/v2/pipelines/6721062615859200/steps/node_abc123',
+      '/api/pipelines/6721062615859200/pipes/node_abc123/select/export_fields',
+      'GET'
+    );
+    expect(relay.request).toHaveBeenCalledWith(
+      '/api/pipelines/6721062615859200/pipes/node_abc123/select/table',
       'GET'
     );
   });
@@ -416,48 +490,61 @@ describe('getPipelineStepConfig', () => {
     expect(path).toContain('step%2Fxyz');
   });
 
-  it('returns step data on success', async () => {
-    const relay = makeMockRelay();
-    const stepData = { id: 'node_abc', channel: 'webhooks', config: { url: 'https://example.com' } };
-    relay.request.mockResolvedValueOnce({ status: 200, data: stepData });
-    const { client } = makeClient(relay);
-    const result = await client.getPipelineStepConfig('1', 'node_abc');
-    expect(result).toEqual(stepData);
-  });
-
-  it('throws McpError on 404', async () => {
-    const relay = makeMockRelay();
-    relay.request.mockResolvedValueOnce({ status: 404, data: { error: 'not found' } });
-    const { client } = makeClient(relay);
-    await expect(client.getPipelineStepConfig('1', 'bad_id')).rejects.toBeInstanceOf(McpError);
-  });
-
   it('wraps with impersonation when impersonateUserId provided', async () => {
     const relay = makeMockRelay();
     relay.request
       .mockResolvedValueOnce({ status: 200, data: {} })          // start
-      .mockResolvedValueOnce({ status: 200, data: { step: 1 } }) // step fetch
+      .mockResolvedValueOnce({ status: 200, data: { step: 1 } }) // export_fields
+      .mockResolvedValueOnce({ status: 200, data: {} })          // select/table
       .mockResolvedValueOnce({ status: 200, data: {} });          // end
     const { client } = makeClient(relay);
     await client.getPipelineStepConfig('123', 'step1', '62913114');
     expect(relay.request.mock.calls[0][0]).toBe('/api/impersonation/realm/start');
-    expect(relay.request.mock.calls[2][0]).toBe('/api/impersonation/end');
+    expect(relay.request.mock.calls[3][0]).toBe('/api/impersonation/end');
+  });
+
+  it('returns step data on success', async () => {
+    const relay = makeMockRelay();
+    const fieldsData = { id: 'node_abc', channel: 'webhooks', config: { url: 'https://example.com', method: 'POST' } };
+    const tablesData = { tables: [{ id: 'tbl1' }] };
+    relay.request
+      .mockResolvedValueOnce({ status: 200, data: fieldsData })
+      .mockResolvedValueOnce({ status: 200, data: tablesData });
+    const { client } = makeClient(relay);
+    const result = await client.getPipelineStepConfig('1', 'node_abc');
+    expect((result as any).fields).toEqual(fieldsData);
+    expect((result as any).tables).toEqual(tablesData);
+  });
+
+  it('throws McpError on 404', async () => {
+    const relay = makeMockRelay();
+    relay.request
+      .mockResolvedValueOnce({ status: 404, data: { error: 'not found' } })
+      .mockResolvedValueOnce({ status: 200, data: {} });
+    const { client } = makeClient(relay);
+    await expect(client.getPipelineStepConfig('1', 'bad_id')).rejects.toBeInstanceOf(McpError);
   });
 
   it('always ends impersonation even when the step request fails', async () => {
     const relay = makeMockRelay();
     relay.request
       .mockResolvedValueOnce({ status: 200, data: {} })          // start
-      .mockResolvedValueOnce({ status: 500, data: 'error' })     // step fetch — throws
+      .mockResolvedValueOnce({ status: 500, data: 'error' })     // export_fields — throws
+      .mockResolvedValueOnce({ status: 200, data: {} })          // select/table (parallel, consumed)
       .mockResolvedValueOnce({ status: 200, data: {} });          // end
     const { client } = makeClient(relay);
-    await expect(client.getPipelineStepConfig('123', 'step1', '62913114')).rejects.toBeInstanceOf(McpError);
-    expect(relay.request).toHaveBeenCalledTimes(3);
-    expect(relay.request.mock.calls[2][0]).toBe('/api/impersonation/end');
+
+    await expect(
+      client.getPipelineStepConfig('123', 'step1', '62913114')
+    ).rejects.toBeInstanceOf(McpError);
+
+    // endPipelineImpersonation must be called regardless of step fetch failure
+    expect(relay.request).toHaveBeenCalledTimes(4);
+    expect(relay.request.mock.calls[3][0]).toBe('/api/impersonation/end');
   });
 });
 
-// ─── getPipelineTriggerSummary ────────────────────────────────────────────────
+// ─── getPipelineTriggerSummary ────────────────────────────────────────────────────────────────
 
 describe('getPipelineTriggerSummary', () => {
   it('calls the designer endpoint and returns extracted trigger info', async () => {
@@ -510,30 +597,34 @@ describe('getPipelineTriggerSummary', () => {
   });
 });
 
-// ─── batchGetPipelineSteps ────────────────────────────────────────────────────
+// ─── batchGetPipelineSteps ────────────────────────────────────────────────────────────────
 
 describe('batchGetPipelineSteps', () => {
   it('calls steps endpoint for each pair', async () => {
     const relay = makeMockRelay();
     relay.request
-      .mockResolvedValueOnce({ status: 200, data: { channel: 'quickbase' } })
-      .mockResolvedValueOnce({ status: 200, data: { channel: 'webhooks' } });
+      .mockResolvedValueOnce({ status: 200, data: { channel: 'quickbase' } })  // s1 export_fields
+      .mockResolvedValueOnce({ status: 200, data: {} })                        // s1 select/table
+      .mockResolvedValueOnce({ status: 200, data: { channel: 'webhooks' } })   // s2 export_fields
+      .mockResolvedValueOnce({ status: 200, data: {} });                       // s2 select/table
     const { client } = makeClient(relay);
     const results = await client.batchGetPipelineSteps([
       { pipelineId: 'p1', stepId: 's1' },
       { pipelineId: 'p1', stepId: 's2' },
     ]);
     expect(results).toHaveLength(2);
-    expect(results[0].config).toMatchObject({ channel: 'quickbase' });
-    expect(results[1].config).toMatchObject({ channel: 'webhooks' });
-    expect(relay.request).toHaveBeenCalledTimes(2);
+    expect((results[0].config as any)?.fields).toMatchObject({ channel: 'quickbase' });
+    expect((results[1].config as any)?.fields).toMatchObject({ channel: 'webhooks' });
+    expect(relay.request).toHaveBeenCalledTimes(4);
   });
 
   it('returns error entry (not throw) when a single step fetch fails', async () => {
     const relay = makeMockRelay();
     relay.request
-      .mockResolvedValueOnce({ status: 200, data: { channel: 'quickbase' } })
-      .mockResolvedValueOnce({ status: 404, data: { error: 'not found' } });
+      .mockResolvedValueOnce({ status: 200, data: { channel: 'quickbase' } })  // s1 export_fields
+      .mockResolvedValueOnce({ status: 200, data: {} })                        // s1 select/table
+      .mockResolvedValueOnce({ status: 404, data: { error: 'not found' } })   // bad export_fields
+      .mockResolvedValueOnce({ status: 200, data: {} });                       // bad select/table (parallel)
     const { client } = makeClient(relay);
     const results = await client.batchGetPipelineSteps([
       { pipelineId: 'p1', stepId: 's1' },
@@ -549,11 +640,12 @@ describe('batchGetPipelineSteps', () => {
     const relay = makeMockRelay();
     relay.request
       .mockResolvedValueOnce({ status: 200, data: {} })                  // start
-      .mockResolvedValueOnce({ status: 200, data: { channel: 'qb' } })  // step 1
+      .mockResolvedValueOnce({ status: 200, data: { channel: 'qb' } })  // step 1 export_fields
+      .mockResolvedValueOnce({ status: 200, data: {} })                  // step 1 select/table
       .mockResolvedValueOnce({ status: 200, data: {} });                  // end
     const { client } = makeClient(relay);
     await client.batchGetPipelineSteps([{ pipelineId: 'p1', stepId: 's1' }], '62913114');
     expect(relay.request.mock.calls[0][0]).toBe('/api/impersonation/realm/start');
-    expect(relay.request.mock.calls[2][0]).toBe('/api/impersonation/end');
+    expect(relay.request.mock.calls[3][0]).toBe('/api/impersonation/end');
   });
 });

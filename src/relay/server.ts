@@ -26,6 +26,7 @@ export interface RelayRequest {
   method: string;
   body?: unknown;
   headers?: Record<string, string>;
+  responseType?: 'json' | 'text';
 }
 
 interface RelayResult {
@@ -58,11 +59,9 @@ export class RelayClient {
   private longPollRes: http.ServerResponse | null = null;
   private helloState: HelloState | null = null;
   private port: number;
-  private realm: string;
 
-  constructor(port: number, realm: string = "<your-realm>") {
+  constructor(port: number) {
     this.port = port;
-    this.realm = realm;
   }
 
   /** Called by the relay HTTP server when the bookmarklet POSTs /relay/hello */
@@ -118,7 +117,8 @@ export class RelayClient {
     path: string,
     method: string,
     body?: unknown,
-    extraHeaders?: Record<string, string>
+    extraHeaders?: Record<string, string>,
+    responseType: 'json' | 'text' = 'json'
   ): Promise<RelayResult> {
     if (!this.isActive) {
       throw new McpError(
@@ -127,7 +127,7 @@ export class RelayClient {
       );
     }
 
-    const req: RelayRequest = { id: randomUUID(), path, method, body, headers: extraHeaders };
+    const req: RelayRequest = { id: randomUUID(), path, method, body, headers: extraHeaders, responseType };
 
     return new Promise<RelayResult>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -171,7 +171,7 @@ export class RelayClient {
       `1. Visit http://localhost:${this.port}/setup in your browser for first-time setup (drag the bookmarklet to your bookmarks toolbar).`,
       '2. Navigate to the QuickBase Pipelines dashboard (the bookmarklet only works from that page).',
       '3. Click the "QB Pipeline Relay" bookmarklet in your toolbar.',
-      `   Direct link: https://${this.realm}/nav/main/action/pipelines/dashboard`,
+      '   Direct link: https://<your-realm>/nav/main/action/pipelines/dashboard',
       '4. You will see a confirmation message. Then retry this tool.',
     ].join('\n');
   }
@@ -244,7 +244,7 @@ fetch(B+'/relay/pending').then(function(r){return r.status===200?r.json():null;}
 if(!req){setTimeout(poll,2000);return;}
 var opts={method:req.method||'GET',credentials:'include',headers:Object.assign({'X-CSRFToken':T,'Accept':'application/json'},req.headers||{})};
 if(req.body&&req.method!=='GET'){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(req.body);}
-fetch(PL+req.path,opts).then(function(r){return r.json().then(function(d){return{status:r.status,data:d};});}).then(function(result){
+fetch(PL+req.path,opts).then(function(r){var parse=req.responseType==='text'?r.text():r.json();return parse.then(function(d){return{status:r.status,data:d};});}).then(function(result){
 return fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(result)});
 }).then(poll).catch(function(e){
 fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:0,data:null,error:e.message})}).catch(function(){}).then(poll);
@@ -407,7 +407,7 @@ function sendForbidden(res: http.ServerResponse): void {
  * @returns The RelayClient instance; MCP tool handlers call `client.request()` on it.
  */
 export function startRelayServer(realm: string, port: number): RelayClient {
-  const client = new RelayClient(port, realm);
+  const client = new RelayClient(port);
   const allowedOrigin = `https://${realm}`;
 
   const server = http.createServer(async (req, res) => {

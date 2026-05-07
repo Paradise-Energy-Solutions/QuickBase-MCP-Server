@@ -29,6 +29,8 @@ export const readOnlyAllowedTools = new Set([
   'quickbase_list_pipelines',
   'quickbase_get_pipeline',
   'quickbase_get_pipeline_activity',
+  'quickbase_get_pipeline_step',
+  'quickbase_get_pipeline_yaml',
   'quickbase_find_pipeline_users',
   'quickbase_start_impersonation',
   'quickbase_end_impersonation'
