@@ -448,6 +448,37 @@ describe('startRelayServer — Origin validation (CSRF protection)', () => {
     await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
+
+  it('POST /relay/shutdown with empty-string Origin is rejected with 403 (sandboxed iframe / file:// page)', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
+      'Origin': '',
+    });
+    expect(result.statusCode).toBe(403);
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+
+  it('POST /relay/result/:id with empty-string Origin is rejected with 403 (sandboxed iframe / file:// page)', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const fakeId = '00000000-0000-1000-8000-000000000001';
+    const result = await httpReqWithHeaders('POST', port, `/relay/result/${fakeId}`, '{}', {
+      'Origin': '',
+    });
+    expect(result.statusCode).toBe(403);
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
 });
 
 describe('startRelayServer — EADDRINUSE retry', () => {

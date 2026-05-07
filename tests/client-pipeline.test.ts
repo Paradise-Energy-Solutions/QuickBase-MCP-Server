@@ -269,7 +269,6 @@ describe('getPipelineActivity', () => {
     expect(endTs).toBeLessThanOrEqual(after);
     expect(endTs - startTs).toBeCloseTo(7 * 86400, -1);  // within ±10s
   });
-});
 
   it('appends record_id to query string when recordId is provided', async () => {
     const { client, relay } = makeClient();
@@ -292,6 +291,7 @@ describe('getPipelineActivity', () => {
     const result = await client.getPipelineActivity('1') as any;
     expect(result._note).toMatch(/No activity found/);
   });
+});
 
 // ─── findPipelineUsers ────────────────────────────────────────────────────────
 
@@ -478,6 +478,35 @@ describe('getPipelineTriggerSummary', () => {
     const { client } = makeClient(relay);
     const result = await client.getPipelineTriggerSummary('123') as any;
     expect(result._note).toMatch(/Trigger info not found/);
+  });
+
+  it('extracts trigger info from nodes array (Shape 2)', async () => {
+    const relay = makeMockRelay();
+    relay.request.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        nodes: [
+          { type: 'trigger', tableId: 'bkhxfnzd4', event: 'add', fields: [5] },
+          { type: 'action', channel: 'webhooks' },
+        ]
+      }
+    });
+    const { client } = makeClient(relay);
+    const result = await client.getPipelineTriggerSummary('123') as any;
+    expect(result.table).toBe('bkhxfnzd4');
+    expect(result.event).toBe('add');
+  });
+
+  it('extracts trigger info from flat root fields (Shape 3)', async () => {
+    const relay = makeMockRelay();
+    relay.request.mockResolvedValueOnce({
+      status: 200,
+      data: { triggerTableId: 'bkhxfnzd4', triggerType: 'modify', triggerFields: [10] }
+    });
+    const { client } = makeClient(relay);
+    const result = await client.getPipelineTriggerSummary('123') as any;
+    expect(result.table).toBe('bkhxfnzd4');
+    expect(result.event).toBe('modify');
   });
 });
 
