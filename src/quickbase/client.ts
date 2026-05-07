@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
-import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions } from '../types/quickbase.js';
+import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions, PipelinesPage } from '../types/quickbase.js';
 import { RelayClient } from '../relay/server.js';
 import { envFlag } from '../utils/env.js';
 import { formatErrorForLog } from '../utils/errors.js';
@@ -1037,52 +1037,58 @@ export class QuickBaseClient {
     pageNumber?: number;
     pageSize?: number;
     realmWide?: boolean;
+    /** Filter by QB Pipelines channel name(s), e.g. ["webhooks"] or ["quickbase"]. */
+    channels?: string[];
+    /** Filter by pipeline tag(s). */
+    tags?: string[];
     impersonateUserId?: string;
-    /** Suggestion #5: client-side filter — return only pipelines whose trigger table ID matches. */
+    /** Client-side filter — return only pipelines whose trigger table ID matches. */
     filterByTableId?: string;
-  } = {}): Promise<any> {
+  } = {}): Promise<PipelinesPage> {
     const relay = this.requireRelay();
-    const { pageNumber = 1, pageSize = 25, realmWide = false, impersonateUserId, filterByTableId } = opts;
+    const { pageNumber = 1, pageSize = 25, realmWide = false,
+             channels = [], tags = [], impersonateUserId, filterByTableId } = opts;
 
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
       const result = await relay.request(
         `/api/v2/pipelines/query/paged?pageNumber=${pageNumber}&pageSize=${pageSize}`,
         'POST',
-        { tags: [], channels: [], users: [], searchString: '', requestRealmPipelines: realmWide }
+        { tags, channels, users: [], searchString: '', requestRealmPipelines: realmWide }
       );
-      const data = this.unwrapRelayResult(result) as Record<string, unknown>;
+      const data = this.unwrapRelayResult(result) as PipelinesPage;
 
-      // Suggestion #4: annotate cross-user pipelines when realmWide is used
+      // Annotate cross-user pipelines when realmWide is used so callers know which users own them.
       if (realmWide && Array.isArray(data?.pipelines)) {
-        const pipelines = data.pipelines as Record<string, unknown>[];
         const ownerIds = new Set<string>();
-        for (const p of pipelines) {
-          const ownerId = String(p['ownerId'] ?? p['owner_id'] ?? p['userId'] ?? p['user_id'] ?? '');
-          if (ownerId && ownerId !== 'undefined') ownerIds.add(ownerId);
+        for (const p of data.pipelines) {
+          const rawId = (p as Record<string, unknown>)['ownerId'] ?? (p as Record<string, unknown>)['owner_id'];
+          if (typeof rawId === 'string' && rawId) ownerIds.add(rawId);
+          else if (typeof rawId === 'number') ownerIds.add(String(rawId));
         }
         if (ownerIds.size > 0) {
-          (data as any)._impersonationHint =
+          data._impersonationHint =
             `These results include pipelines from multiple owners (IDs: ${[...ownerIds].join(', ')}). ` +
             `To access pipelines belonging to another user, pass impersonateUserId with their QB user ID. ` +
             `Use quickbase_find_pipeline_users to look up a user ID by name or email.`;
         }
       }
 
-      // Suggestion #5: client-side filter by trigger table ID
+      // Client-side filter by trigger table ID (single page only — does not paginate)
       if (filterByTableId && Array.isArray(data?.pipelines)) {
-        const before = (data.pipelines as unknown[]).length;
-        (data as any).pipelines = (data.pipelines as Record<string, unknown>[]).filter(p => {
+        const before = data.pipelines.length;
+        data.pipelines = data.pipelines.filter(p => {
+          const raw = p as Record<string, unknown>;
           const tableId =
-            (p['triggerTableId'] as string | undefined) ??
-            (p['trigger_table_id'] as string | undefined) ??
-            ((p['trigger'] as any)?.tableId as string | undefined) ??
-            ((p['trigger'] as any)?.table_id as string | undefined) ??
+            (raw['triggerTableId'] as string | undefined) ??
+            (raw['trigger_table_id'] as string | undefined) ??
+            ((raw['trigger'] as Record<string, unknown> | undefined)?.['tableId'] as string | undefined) ??
+            ((raw['trigger'] as Record<string, unknown> | undefined)?.['table_id'] as string | undefined) ??
             null;
           return tableId === filterByTableId;
         });
-        (data as any)._filterNote =
-          `Filtered from ${before} to ${(data as any).pipelines.length} pipelines matching trigger table "${filterByTableId}". ` +
+        data._filterNote =
+          `Filtered from ${before} to ${data.pipelines.length} pipelines matching trigger table "${filterByTableId}". ` +
           `If no results appear, the list API may not expose trigger table IDs — ` +
           `use quickbase_get_pipeline on individual pipeline IDs to inspect their trigger tables directly.`;
       }
@@ -1102,7 +1108,7 @@ export class QuickBaseClient {
         'GET'
       );
       const tree = this.unwrapRelayResult(result) as Record<string, unknown>;
-      // Suggestion #1: surface trigger summary at the top level
+      // Surface trigger summary at the top level for quick LLM access without parsing the full tree
       return { _trigger: extractTriggerInfo(tree), ...tree };
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
@@ -1114,8 +1120,8 @@ export class QuickBaseClient {
     endDate?: string;
     perPage?: number;
     impersonateUserId?: string;
-    /** Suggestion #8: narrow activity to runs triggered by a specific record. */
-    recordId?: string | number;
+    /** Narrow activity to runs triggered by a specific record. */
+    recordId?: string;
   } = {}): Promise<any> {
     const relay = this.requireRelay();
     const { perPage = 25, impersonateUserId, recordId } = opts;
@@ -1146,7 +1152,7 @@ export class QuickBaseClient {
     qs.append('pipeline_id', pipelineId);
     qs.append('pipeline_run_id', '');
     qs.append('offset', '');
-    // Suggestion #8: narrow to runs that touched a specific record
+    // Narrow activity to runs triggered by a specific record when recordId is set
     if (recordId != null) qs.append('record_id', String(recordId));
 
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
@@ -1189,7 +1195,7 @@ export class QuickBaseClient {
     return this.unwrapRelayResult(result);
   }
 
-  // ── Suggestion #2 & #3: step config + trigger summary ──────────────────
+  // ── Step config and trigger summary helpers ─────────────────────────────
 
   /**
    * Get the operational configuration for a single pipeline step/node.
@@ -1211,8 +1217,10 @@ export class QuickBaseClient {
   }
 
   /**
-   * Suggestion #3: Lightweight trigger summary — trigger table, event type,
-   * watched fields, and filter conditions without fetching the full tree.
+   * Lightweight trigger summary — extracts trigger table, event type,
+   * watched fields, and filter conditions from the pipeline designer tree.
+   * Convenience wrapper: calls the same designer endpoint as getPipelineDetail
+   * but returns only the trigger block.
    */
   async getPipelineTriggerSummary(pipelineId: string, impersonateUserId?: string): Promise<any> {
     const relay = this.requireRelay();
@@ -1230,34 +1238,53 @@ export class QuickBaseClient {
   }
 
   /**
-   * Suggestion #6: Batch fetch step configs for multiple steps in one call,
+   * Batch fetch step configs for multiple steps in one call,
    * reducing round-trips when inspecting several steps at once.
    */
   async batchGetPipelineSteps(
     steps: Array<{ pipelineId: string; stepId: string }>,
-    impersonateUserId?: string
+    impersonateUserId?: string,
+    { concurrency = 5 }: { concurrency?: number } = {}
   ): Promise<Array<{ pipelineId: string; stepId: string; config?: unknown; error?: string }>> {
     const relay = this.requireRelay();
     if (impersonateUserId) await this.startPipelineImpersonation(impersonateUserId);
     try {
-      const results = await Promise.all(
-        steps.map(async ({ pipelineId, stepId }) => {
-          try {
-            const result = await relay.request(
-              `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}`,
-              'GET'
-            );
-            return { pipelineId, stepId, config: this.unwrapRelayResult(result) };
-          } catch (err) {
-            return { pipelineId, stepId, error: err instanceof Error ? err.message : String(err) };
-          }
-        })
-      );
+      const results = await pLimit(concurrency, steps.map(({ pipelineId, stepId }) => async () => {
+        try {
+          const result = await relay.request(
+            `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}`,
+            'GET'
+          );
+          return { pipelineId, stepId, config: this.unwrapRelayResult(result) };
+        } catch (err) {
+          return { pipelineId, stepId, error: err instanceof Error ? err.message : String(err) };
+        }
+      }));
       return results;
     } finally {
       if (impersonateUserId) await this.endPipelineImpersonation().catch(() => {});
     }
   }
+}
+
+/**
+ * Minimal concurrency limiter. Runs `tasks` with at most `limit` in flight
+ * at the same time, preserving the original order in the returned array.
+ */
+async function pLimit<T>(limit: number, tasks: Array<() => Promise<T>>): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (next < tasks.length) {
+      const idx = next++;
+      results[idx] = await tasks[idx]();
+    }
+  }
+
+  const concurrency = Math.max(1, Math.min(limit, tasks.length));
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return results;
 }
 
 /**

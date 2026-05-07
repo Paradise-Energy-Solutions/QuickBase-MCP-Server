@@ -299,13 +299,15 @@ const ListPipelinesSchema = z.object({
   pageNumber: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(25),
   realmWide: z.boolean().default(false),
+  channels: z.array(z.string()).optional().describe('Filter by QB Pipelines channel name(s), e.g. ["webhooks"] or ["quickbase"]'),
+  tags: z.array(z.string()).optional().describe('Filter by pipeline tag(s)'),
   impersonateUserId: z.string().optional(),
-  filterByTableId: z.string().optional().describe('Return only pipelines whose trigger table ID matches this value (client-side filter)')
+  filterByTableId: z.string().min(1).optional().describe('Return only pipelines whose trigger table ID matches this value (client-side filter)')
 });
 
 const GetPipelineSchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
-  pipelineId: z.string().min(1),
+  pipelineId: z.string().min(1).max(256),
   impersonateUserId: z.string().optional()
 });
 
@@ -316,7 +318,7 @@ const GetPipelineActivitySchema = z.object({
   endDate: z.string().optional(),
   perPage: z.number().int().min(1).max(100).default(25),
   impersonateUserId: z.string().optional(),
-  recordId: z.union([z.string(), z.number()]).optional().describe('Filter activity to runs triggered by this specific record ID')
+  recordId: z.string().optional().describe('Filter activity to runs triggered by this specific record ID')
 });
 
 const FindPipelineUsersSchema = z.object({
@@ -915,6 +917,8 @@ const rawTools: Tool[] = [
         pageNumber: { type: 'number', description: 'Page number (default 1)' },
         pageSize: { type: 'number', description: 'Results per page (default 25)' },
         realmWide: { type: 'boolean', description: 'If true, return all realm pipelines regardless of owner (requires admin). Default false.' },
+        channels: { type: 'array', items: { type: 'string' }, description: 'Filter by QB Pipelines channel name(s), e.g. ["webhooks"] or ["quickbase"]. Passed to the API as-is.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter by pipeline tag(s). Passed to the API as-is.' },
         impersonateUserId: { type: 'string', description: 'QB user ID whose pipelines to retrieve (e.g. "62913114"). The server impersonates this user automatically — your browser session is unaffected. Use quickbase_find_pipeline_users to find a user ID by name or email.' },
         filterByTableId: { type: 'string', description: 'Return only pipelines whose trigger table ID matches this value. Use when looking for pipelines watching a specific table.' }
       },
@@ -946,8 +950,7 @@ const rawTools: Tool[] = [
         endDate: { type: 'string', description: 'ISO 8601 end date (default: now)' },
         perPage: { type: 'number', description: 'Results per page (default 25)' },
         impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' },
-        recordId: { type: 'string', description: 'Filter activity to runs triggered by this specific record ID.' }
-      },
+        recordId: { type: 'string', description: 'Filter activity to runs triggered by this specific record ID.' }      },
       required: ['pipelineId']
     }
   },
@@ -980,7 +983,7 @@ const rawTools: Tool[] = [
 
   {
     name: 'quickbase_get_pipeline_trigger_summary',
-    description: `[UNOFFICIAL API — may break without notice] Get a lightweight summary of what a pipeline triggers on: trigger table, event type (record added/modified/deleted), watched fields, and filter conditions. Faster than quickbase_get_pipeline when you only need to answer "what does this pipeline watch?". Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    description: `[UNOFFICIAL API — may break without notice] Get a lightweight summary of what a pipeline triggers on: trigger table, event type (record added/modified/deleted), watched fields, and filter conditions. Convenience wrapper: calls the same endpoint as quickbase_get_pipeline but returns only the extracted trigger block, reducing token noise when you only need to answer "what does this pipeline watch?". Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
     inputSchema: {
       type: 'object',
       properties: {

@@ -167,3 +167,19 @@ export const QuickBasePipelineActivity = z.object({
 });
 
 export type QuickBasePipelineActivity = z.infer<typeof QuickBasePipelineActivity>;
+
+/**
+ * Shape of the paged pipeline list response from the unofficial QB Pipelines API.
+ * Fields are optional because the shape may change without notice.
+ */
+export interface PipelinesPage {
+  pipelines: QuickBasePipeline[];
+  totalCount?: number;
+  pageNumber?: number;
+  pageSize?: number;
+  /** Injected client-side when realmWide=true and multiple owners are present. */
+  _impersonationHint?: string;
+  /** Injected client-side when filterByTableId is supplied. */
+  _filterNote?: string;
+  [key: string]: unknown;
+}

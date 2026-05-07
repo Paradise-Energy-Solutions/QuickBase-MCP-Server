@@ -106,6 +106,13 @@ function parseEnvInt(name: string, defaultValue: number): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : defaultValue;
 }
 
+/** Returns a human-readable string describing which user the tool is acting as. */
+function viewingAs(impersonateUserId?: string): string {
+  return impersonateUserId
+    ? `user ${impersonateUserId} (impersonated — your browser session was unaffected)`
+    : 'logged-in browser user';
+}
+
 class QuickBaseMCPServer {
   private server: Server;
   private baseConfig: Omit<QuickBaseConfig, 'appId'>;
@@ -514,13 +521,13 @@ class QuickBaseMCPServer {
           pageNumber: a.pageNumber,
           pageSize: a.pageSize,
           realmWide: a.realmWide,
+          channels: a.channels,
+          tags: a.tags,
           impersonateUserId: a.impersonateUserId,
           filterByTableId: a.filterByTableId
         });
         const annotated = {
-          _viewingAs: a.impersonateUserId
-            ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-            : 'logged-in browser user',
+          _viewingAs: viewingAs(a.impersonateUserId),
           ...result
         };
         return JSON.stringify(annotated, null, 2);
@@ -531,9 +538,7 @@ class QuickBaseMCPServer {
         const result = await getClient(a.appId).getPipelineDetail(a.pipelineId, a.impersonateUserId);
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             ...result
           },
           null, 2
@@ -551,9 +556,7 @@ class QuickBaseMCPServer {
         });
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             ...result
           },
           null, 2
@@ -565,9 +568,7 @@ class QuickBaseMCPServer {
         const result = await getClient(a.appId).getPipelineStepConfig(a.pipelineId, a.stepId, a.impersonateUserId);
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             ...result
           },
           null, 2
@@ -579,9 +580,7 @@ class QuickBaseMCPServer {
         const result = await getClient(a.appId).getPipelineTriggerSummary(a.pipelineId, a.impersonateUserId);
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             ...result
           },
           null, 2
@@ -593,9 +592,7 @@ class QuickBaseMCPServer {
         const results = await getClient(a.appId).batchGetPipelineSteps(a.steps, a.impersonateUserId);
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             steps: results
           },
           null, 2
