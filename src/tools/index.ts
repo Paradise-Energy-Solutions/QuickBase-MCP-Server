@@ -301,7 +301,8 @@ const ListPipelinesSchema = z.object({
   realmWide: z.boolean().default(false),
   channels: z.array(z.string().max(128)).max(50).optional().describe('Filter by QB Pipelines channel type(s), e.g. ["webhooks"] or ["quickbase"]'),
   tags: z.array(z.string().max(128)).max(50).optional().describe('Filter by pipeline tag(s)'),
-  impersonateUserId: z.string().optional()
+  impersonateUserId: z.string().optional(),
+  filterByTableId: z.string().min(1).optional().describe('Return only pipelines whose trigger table ID matches this value (client-side filter)')
 });
 
 const GetPipelineSchema = z.object({
@@ -329,12 +330,28 @@ const GetPipelineActivitySchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   perPage: z.number().int().min(1).max(100).default(25),
-  impersonateUserId: z.string().optional()
+  impersonateUserId: z.string().optional(),
+  recordId: z.string().optional().describe('Filter activity to runs triggered by this specific record ID')
 });
 
 const FindPipelineUsersSchema = z.object({
   appId: z.string().min(1).max(64).describe('QuickBase application ID'),
   query: z.string().min(1).max(128)
+});
+
+const GetPipelineTriggerSummarySchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  pipelineId: z.string().min(1).max(256).describe('Pipeline numeric ID'),
+  impersonateUserId: z.string().optional()
+});
+
+const BatchGetPipelineStepsSchema = z.object({
+  appId: z.string().min(1).max(64).describe('QuickBase application ID'),
+  steps: z.array(z.object({
+    pipelineId: z.string().min(1).max(256).describe('Pipeline numeric ID'),
+    stepId: z.string().min(1).max(256).describe('Step/node ID')
+  })).min(1).max(20).describe('List of pipeline+step pairs to fetch (max 20)'),
+  impersonateUserId: z.string().optional()
 });
 
 const StartImpersonationSchema = z.object({
@@ -906,7 +923,8 @@ const rawTools: Tool[] = [
         pageNumber: { type: 'number', description: 'Page number (default 1)' },
         pageSize: { type: 'number', description: 'Results per page (default 25)' },
         realmWide: { type: 'boolean', description: 'If true, return all realm pipelines regardless of owner (requires admin). Default false.' },
-        impersonateUserId: { type: 'string', description: 'QB user ID whose pipelines to retrieve (e.g. "62913114"). The server impersonates this user automatically — your browser session is unaffected. Use quickbase_find_pipeline_users to find a user ID by name or email.' }
+        impersonateUserId: { type: 'string', description: 'QB user ID whose pipelines to retrieve (e.g. "62913114"). The server impersonates this user automatically — your browser session is unaffected. Use quickbase_find_pipeline_users to find a user ID by name or email.' },
+        filterByTableId: { type: 'string', description: 'Return only pipelines whose trigger table ID matches this value. Use when looking for pipelines watching a specific table.' }
       },
       required: []
     }
@@ -962,7 +980,8 @@ const rawTools: Tool[] = [
         startDate: { type: 'string', description: 'ISO 8601 start date (default: 7 days ago)' },
         endDate: { type: 'string', description: 'ISO 8601 end date (default: now)' },
         perPage: { type: 'number', description: 'Results per page (default 25)' },
-        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' }
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Required if the pipeline belongs to a different user — the server handles it automatically. Use quickbase_find_pipeline_users to look up a user ID.' },
+        recordId: { type: 'string', description: 'Filter activity to runs triggered by this specific record ID (optional).' }
       },
       required: ['pipelineId']
     }
@@ -977,6 +996,44 @@ const rawTools: Tool[] = [
         query: { type: 'string', description: 'Name or email fragment to search for' }
       },
       required: ['query']
+    }
+  },
+
+  {
+    name: 'quickbase_get_pipeline_trigger_summary',
+    description: `[UNOFFICIAL API — may break without notice] Get a lightweight summary of what a pipeline triggers on: trigger table, event type (record added/modified/deleted), watched fields, and filter conditions. Convenience wrapper: calls the same endpoint as quickbase_get_pipeline but returns only the extracted trigger block, reducing token noise when you only need to answer "what does this pipeline watch?". Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pipelineId: { type: 'string', description: 'Pipeline numeric ID' },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['pipelineId']
+    }
+  },
+
+  {
+    name: 'quickbase_batch_get_pipeline_steps',
+    description: `[UNOFFICIAL API — may break without notice] Fetch the configuration of multiple pipeline steps in a single call. Accepts an array of { pipelineId, stepId } pairs (max 20) and returns each step's config or an error if a step cannot be fetched. Reduces round-trips compared to calling quickbase_get_pipeline_step individually. Requires the QB Pipeline Relay bookmarklet to be active (setup: ${_setupUrl} — port configurable via QB_RELAY_PORT in .env).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          description: 'Array of { pipelineId, stepId } pairs to fetch (max 20)',
+          items: {
+            type: 'object',
+            properties: {
+              pipelineId: { type: 'string' },
+              stepId: { type: 'string' }
+            },
+            required: ['pipelineId', 'stepId']
+          },
+          maxItems: 20
+        },
+        impersonateUserId: { type: 'string', description: 'QB user ID to impersonate. Use quickbase_find_pipeline_users to look up a user ID.' }
+      },
+      required: ['steps']
     }
   },
 
@@ -1046,5 +1103,7 @@ export {
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
   GetPipelineYamlSchema,
+  GetPipelineTriggerSummarySchema,
+  BatchGetPipelineStepsSchema,
   StartImpersonationSchema
 }; 

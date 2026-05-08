@@ -41,6 +41,8 @@ import {
   GetPipelineActivitySchema,
   FindPipelineUsersSchema,
   GetPipelineYamlSchema,
+  GetPipelineTriggerSummarySchema,
+  BatchGetPipelineStepsSchema,
   StartImpersonationSchema
 } from './tools/index.js';
 import { AppConfig, QuickBaseConfig } from './types/quickbase.js';
@@ -103,6 +105,13 @@ loadDotenv(import.meta.url);
 function parseEnvInt(name: string, defaultValue: number): number {
   const raw = Number(process.env[name]);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : defaultValue;
+}
+
+/** Returns a human-readable string describing which user the tool is acting as. */
+function viewingAs(impersonateUserId?: string): string {
+  return impersonateUserId
+    ? `user ${impersonateUserId} (impersonated — your browser session was unaffected)`
+    : 'logged-in browser user';
 }
 
 class QuickBaseMCPServer {
@@ -515,12 +524,11 @@ class QuickBaseMCPServer {
           realmWide: a.realmWide,
           channels: a.channels,
           tags: a.tags,
-          impersonateUserId: a.impersonateUserId
+          impersonateUserId: a.impersonateUserId,
+          filterByTableId: a.filterByTableId
         });
         const annotated = {
-          _viewingAs: a.impersonateUserId
-            ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-            : 'logged-in browser user',
+          _viewingAs: viewingAs(a.impersonateUserId),
           ...result
         };
         return JSON.stringify(annotated, null, 2);
@@ -531,9 +539,7 @@ class QuickBaseMCPServer {
         const result = await getClient(a.appId).getPipelineDetail(a.pipelineId, a.impersonateUserId);
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             ...result
           },
           null, 2
@@ -545,9 +551,7 @@ class QuickBaseMCPServer {
         const result = await getClient(a.appId).getPipelineStepConfig(a.pipelineId, a.stepId, a.impersonateUserId);
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             ...result
           },
           null, 2
@@ -566,14 +570,37 @@ class QuickBaseMCPServer {
           startDate: a.startDate,
           endDate: a.endDate,
           perPage: a.perPage,
-          impersonateUserId: a.impersonateUserId
+          impersonateUserId: a.impersonateUserId,
+          recordId: a.recordId
         });
         return JSON.stringify(
           {
-            _viewingAs: a.impersonateUserId
-              ? `user ${a.impersonateUserId} (impersonated — your browser session was unaffected)`
-              : 'logged-in browser user',
+            _viewingAs: viewingAs(a.impersonateUserId),
             ...result
+          },
+          null, 2
+        );
+      },
+
+      quickbase_get_pipeline_trigger_summary: async (args) => {
+        const a = parseArgs('quickbase_get_pipeline_trigger_summary', GetPipelineTriggerSummarySchema, args);
+        const result = await getClient(a.appId).getPipelineTriggerSummary(a.pipelineId, a.impersonateUserId);
+        return JSON.stringify(
+          {
+            _viewingAs: viewingAs(a.impersonateUserId),
+            ...result
+          },
+          null, 2
+        );
+      },
+
+      quickbase_batch_get_pipeline_steps: async (args) => {
+        const a = parseArgs('quickbase_batch_get_pipeline_steps', BatchGetPipelineStepsSchema, args);
+        const results = await getClient(a.appId).batchGetPipelineSteps(a.steps, a.impersonateUserId);
+        return JSON.stringify(
+          {
+            _viewingAs: viewingAs(a.impersonateUserId),
+            steps: results
           },
           null, 2
         );
