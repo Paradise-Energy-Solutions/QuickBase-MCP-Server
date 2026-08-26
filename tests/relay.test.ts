@@ -680,6 +680,23 @@ describe('startRelayServer — GET /relay/status', () => {
   });
 });
 
+describe('startRelayServer — setup page', () => {
+  it('documents restart and reactivation recovery', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await getFreePort();
+    startRelayServer('test.quickbase.com', port);
+    await waitForPort(port);
+
+    const result = await httpReq('GET', port, '/setup');
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toEqual(expect.stringContaining('restart the MCP server completely'));
+    expect(result.body).toEqual(expect.stringContaining('relay%2Fhello'));
+
+    await httpReq('POST', port, '/relay/shutdown', '{}');
+    consoleSpy.mockRestore();
+  });
+});
+
 describe('startRelayServer — GET /relay/pending end-to-end relay', () => {
   it('delivers a queued request to a long-polling client and resolves the caller', async () => {
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
