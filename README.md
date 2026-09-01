@@ -43,7 +43,9 @@ A Model Context Protocol (MCP) server that provides maximum flexibility for Quic
 ## Installation
 
 1. **Clone and setup the server:**
+Navigate to the desired destination folder in your terminal, then run:
 ```bash
+git clone https://github.com/Paradise-Energy-Solutions/QuickBase-MCP-Server
 cd quickbase-mcp-server
 npm install
 ```
