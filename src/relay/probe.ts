@@ -31,7 +31,8 @@ function getJson(port: number, path: string, timeoutMs: number): Promise<Fetched
         resolve(value);
       }
     };
-    const req = http.get({ host: '127.0.0.1', port, path, headers: { Accept: 'application/json' } }, (res) => {
+    // agent:false: a fresh connection, so a dead daemon reads as "refused", not a stale pooled socket reset.
+    const req = http.get({ host: '127.0.0.1', port, path, headers: { Accept: 'application/json' }, agent: false }, (res) => {
       const chunks: Buffer[] = [];
       let bytes = 0;
       res.on('data', (chunk: Buffer) => {

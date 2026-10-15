@@ -173,6 +173,8 @@ export class FakeBookmarklet {
   private async runLoop(): Promise<void> {
     while (this.running) {
       try {
+        // Like the real bookmarklet's poll(): say hello first, so a restarted daemon re-attaches it.
+        await this.hello().catch(() => undefined);
         const { status, body } = await this.poll();
         if (status !== 200) {
           await new Promise((r) => setTimeout(r, 10));

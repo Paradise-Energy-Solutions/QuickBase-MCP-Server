@@ -16,6 +16,9 @@
     "test:integration": "node test-integration-quickbase.js",
     "test:jest": "jest",
     "setup": "node setup.js",
+    "relay:start": "node dist/relay/daemon.js start --foreground",
+    "relay:stop": "node dist/relay/daemon.js stop",
+    "relay:status": "node dist/relay/daemon.js status",
     "prepublishOnly": "npm ci && npm run build && npm run test",
     "clean": "rm -rf dist"
   },
