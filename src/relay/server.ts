@@ -13,12 +13,21 @@
  *   5. The queued MCP tool call resolves.
  *
  * The relay binds to 127.0.0.1 only and accepts CORS only from the QB realm
- * domain — no external access, no SSRF risk.
+ * domain — no external access, no SSRF risk. Every request must also carry a
+ * Host of 127.0.0.1:<port> or localhost:<port> (DNS-rebinding defence), the
+ * bookmarklet endpoints require the QB realm Origin and a CORS-mode fetch, and
+ * relay paths are validated (see validation.ts) before they can be queued.
  */
 
 import http from 'node:http';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
+import {
+  assertValidRelayRequest,
+  isFetchModeAllowed,
+  isHostAllowed,
+  isOriginAllowed,
+} from './validation.js';
 
 export interface RelayRequest {
   id: string;
@@ -120,6 +129,10 @@ export class RelayClient {
     extraHeaders?: Record<string, string>,
     responseType: 'json' | 'text' = 'json'
   ): Promise<RelayResult> {
+    // The bookmarklet does fetch(PL + path) with the user's CSRF token, so the
+    // path is validated before anything can be queued, ahead of the active check.
+    assertValidRelayRequest(path, method, extraHeaders);
+
     if (!this.isActive) {
       throw new McpError(
         ErrorCode.InternalError,
@@ -374,29 +387,33 @@ function cors(res: http.ServerResponse, allowedOrigin: string): void {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
-/**
- * Returns true when the request origin is acceptable:
- *  - No Origin header  → same-process HTTP request (node:http.request), always allowed.
- *  - Origin matches the QB realm → bookmarklet running on the QB domain, allowed.
- *  - Any other origin  → cross-site request, denied.
- *
- * Only `origin === undefined` is treated as a same-process call. An empty-string
- * or `"null"` origin originates from a browser context (sandboxed iframes, file://
- * pages) and must be rejected, not trusted.
- *
- * This guards endpoints that mutate server state (/relay/shutdown, /relay/result)
- * against cross-site requests that bypass CORS preflight (e.g. form POSTs with
- * application/x-www-form-urlencoded).
- */
-function isOriginAllowed(origin: string | undefined, allowedOrigin: string): boolean {
-  if (origin === undefined) return true; // no Origin header → same-process call
-  return origin === allowedOrigin;
-}
-
-/** Sends a 403 Forbidden JSON response. Used on state-mutating endpoints that reject non-QB origins. */
+/** Sends a 403 Forbidden JSON response. Used when a request fails the Host, Origin or Fetch Metadata checks. */
 function sendForbidden(res: http.ServerResponse): void {
   res.writeHead(403, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Forbidden' }));
+}
+
+/**
+ * Guards the endpoints only the bookmarklet (or a same-process caller) may use.
+ * Sends 403 and returns true when the request must not proceed: its Origin is
+ * not the QB realm (an absent Origin is a same-process call), or its
+ * Sec-Fetch-Mode says it was not issued by a CORS-mode fetch.
+ *
+ * This keeps other web pages from activating the relay, consuming queued
+ * requests or posting forged results, including simple cross-site requests
+ * that bypass CORS preflight.
+ */
+function refuseUnlessBookmarklet(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  allowedOrigin: string
+): boolean {
+  const origin = req.headers.origin as string | undefined;
+  if (isOriginAllowed(origin, allowedOrigin) && isFetchModeAllowed(req.headers['sec-fetch-mode'])) {
+    return false;
+  }
+  sendForbidden(res);
+  return true;
 }
 
 /**
@@ -417,6 +434,12 @@ export function startRelayServer(realm: string, port: number): RelayClient {
   const allowedOrigin = `https://${realm}`;
 
   const server = http.createServer(async (req, res) => {
+    // DNS-rebinding defence: refuse before emitting any CORS headers.
+    if (!isHostAllowed(req.headers.host, port)) {
+      sendForbidden(res);
+      return;
+    }
+
     cors(res, allowedOrigin);
 
     if (req.method === 'OPTIONS') {
@@ -463,12 +486,14 @@ export function startRelayServer(realm: string, port: number): RelayClient {
 
     // ── GET /relay/pending ────────────────────────────────────────────────────
     if (req.method === 'GET' && url === '/relay/pending') {
+      if (refuseUnlessBookmarklet(req, res, allowedOrigin)) return;
       client.registerLongPoll(res);
       return;
     }
 
     // ── POST /relay/hello ─────────────────────────────────────────────────────
     if (req.method === 'POST' && url === '/relay/hello') {
+      if (refuseUnlessBookmarklet(req, res, allowedOrigin)) return;
       try {
         const body = await readBody(req) as { csrfToken: string; realm: string };
         if (body?.csrfToken && body?.realm) {
@@ -484,11 +509,7 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     // ── POST /relay/result/:id ────────────────────────────────────────────────
     const resultMatch = url.match(/^\/relay\/result\/([a-f0-9-]{36})$/);
     if (req.method === 'POST' && resultMatch) {
-      const origin = req.headers.origin as string | undefined;
-      if (!isOriginAllowed(origin, allowedOrigin)) {
-        sendForbidden(res);
-        return;
-      }
+      if (refuseUnlessBookmarklet(req, res, allowedOrigin)) return;
       try {
         const result = await readBody(req) as RelayResult;
         client.receiveResult(resultMatch[1], result);
