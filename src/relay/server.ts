@@ -22,27 +22,13 @@
 import http from 'node:http';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
+import type { RelayRequest, RelayResult, RelayTransport } from './types.js';
 import {
   assertValidRelayRequest,
   isFetchModeAllowed,
   isHostAllowed,
   isOriginAllowed,
 } from './validation.js';
-
-export interface RelayRequest {
-  id: string;
-  path: string;
-  method: string;
-  body?: unknown;
-  headers?: Record<string, string>;
-  responseType?: 'json' | 'text';
-}
-
-interface RelayResult {
-  status: number;
-  data: unknown;
-  error?: string;
-}
 
 interface PendingEntry {
   resolve: (result: RelayResult) => void;
@@ -62,7 +48,7 @@ const LONG_POLL_TIMEOUT_MS = 28_000; // hold long-poll just under the client tim
 const MAX_BODY_BYTES = 1_048_576; // 1 MB — protect against runaway payloads
 const RETRY_DELAYS_MS = [500, 500, 1000, 1000, 2000]; // EADDRINUSE backoff — ~5 s total
 
-export class RelayClient {
+export class RelayClient implements RelayTransport {
   private pending: Map<string, PendingEntry> = new Map();
   private queue: RelayRequest[] = [];
   private longPollRes: http.ServerResponse | null = null;
