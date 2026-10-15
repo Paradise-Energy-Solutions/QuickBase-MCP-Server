@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { QuickBaseConfig, QuickBaseField, QuickBaseTable, QuickBaseRecord, QueryOptions, PipelinesPage } from '../types/quickbase.js';
-import { RelayClient } from '../relay/server.js';
+import type { RelayTransport } from '../relay/types.js';
 import { envFlag } from '../utils/env.js';
 import { formatErrorForLog } from '../utils/errors.js';
 
@@ -9,7 +9,7 @@ export class QuickBaseClient {
   private axios: AxiosInstance;
   private config: QuickBaseConfig;
   private logApi: boolean;
-  private relayClient: RelayClient | null = null;
+  private relayClient: RelayTransport | null = null;
 
   private static extractCreatedRecordIds(responseData: any): number[] {
     const normalizeIds = (ids: unknown[]): number[] =>
@@ -1024,11 +1024,11 @@ export class QuickBaseClient {
   // ========== RELAY CLIENT ==========
 
   /** Inject the relay client after construction (avoids circular dependency). */
-  setRelayClient(relay: RelayClient): void {
+  setRelayClient(relay: RelayTransport): void {
     this.relayClient = relay;
   }
 
-  private requireRelay(): RelayClient {
+  private requireRelay(): RelayTransport {
     if (!this.relayClient) {
       throw new Error('Pipeline relay client is not configured. Ensure the relay server started successfully.');
     }
@@ -1262,18 +1262,49 @@ export class QuickBaseClient {
 
   async startPipelineImpersonation(qbUserId: string): Promise<any> {
     const relay = this.requireRelay();
-    const result = await relay.request(
-      '/api/impersonation/realm/start',
-      'POST',
-      { qb_user_id: qbUserId }
-    );
-    return this.unwrapRelayResult(result);
+    // The shared relay serves every MCP process: hold its exclusive lock from here
+    // until endPipelineImpersonation so no other process runs as this identity.
+    await relay.acquireExclusive?.();
+    let result;
+    try {
+      result = await relay.request(
+        '/api/impersonation/realm/start',
+        'POST',
+        { qb_user_id: qbUserId }
+      );
+    } catch (err) {
+      // The start may or may not have run in the browser. Unless the relay never sent it,
+      // undo it while still holding the lock, and release only once that succeeded: if the
+      // lock were released with an impersonation still active, another session's requests
+      // would run as this identity. A lock that stays held is ended by the daemon on expiry.
+      const kind = (err as { kind?: string } | null)?.kind; // RelayError.kind: set by the shared relay's transport
+      const neverSent = kind !== undefined && ['not_active', 'invalid', 'busy'].includes(kind);
+      try {
+        if (!neverSent) await relay.request('/api/impersonation/end', 'POST', {});
+        await relay.releaseExclusive?.();
+      } catch {
+        /* keep the lock; the daemon ends the abandoned impersonation when it expires */
+      }
+      throw err;
+    }
+    try {
+      return this.unwrapRelayResult(result);
+    } catch (err) {
+      await relay.releaseExclusive?.().catch(() => {}); // the browser answered with an error: nothing started
+      throw err;
+    }
   }
 
   async endPipelineImpersonation(): Promise<any> {
     const relay = this.requireRelay();
+    // Release the shared lock only once the impersonation is known to be over. If this
+    // request fails the browser may still be impersonating, so the lock stays held and the
+    // daemon retries the end when the hold expires; releasing now would let another session
+    // run as the impersonated user.
     const result = await relay.request('/api/impersonation/end', 'POST', {});
-    return this.unwrapRelayResult(result);
+    const unwrapped = this.unwrapRelayResult(result);
+    await relay.releaseExclusive?.().catch(() => {});
+    return unwrapped;
   }
 
   // ── Step config and trigger summary helpers ─────────────────────────────
