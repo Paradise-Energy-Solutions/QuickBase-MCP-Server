@@ -35,6 +35,8 @@ export interface TestDaemonOptions {
   requestTimeoutMs?: number;
   info?: Partial<RelayInfo>;
   secret?: string;
+  /** Close the server when /relay/stop is accepted, like the real daemon does. */
+  closeOnStop?: boolean;
 }
 
 export interface TestDaemon {
@@ -76,7 +78,10 @@ export async function startTestDaemon(opts: TestDaemonOptions = {}): Promise<Tes
       info: makeTestInfo({ ...opts.info }),
       lockTtlMs: opts.lockTtlMs ?? 60_000,
       lockWaitMs: opts.lockWaitMs ?? 250,
-      onStop: (reason) => stopReasons.push(reason),
+      onStop: (reason) => {
+        stopReasons.push(reason);
+        if (opts.closeOnStop) void server.close();
+      },
     },
   });
   await server.ready;
