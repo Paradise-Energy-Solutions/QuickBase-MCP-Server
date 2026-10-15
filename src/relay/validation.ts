@@ -8,7 +8,8 @@
  * RPC callers and for the in-process RelayClient.
  */
 
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { RelayError } from './errors.js';
 
 export const MAX_RELAY_PATH_LENGTH = 2048;
 
@@ -129,9 +130,9 @@ export function isFetchModeAllowed(mode: string | string[] | undefined): boolean
   return typeof mode === 'string' && ALLOWED_FETCH_MODES.includes(mode);
 }
 
-/** Throws an InvalidParams McpError describing the first violated rule (never echoing the offending value). */
+/** Throws an InvalidParams RelayError describing the first violated rule (never echoing the offending value). */
 export function assertValidRelayRequest(path: unknown, method: unknown, headers?: unknown): void {
   for (const result of [validateRelayPath(path), validateRelayMethod(method), validateRelayHeaders(headers)]) {
-    if (!result.ok) throw new McpError(ErrorCode.InvalidParams, `Invalid relay request: ${result.reason}`);
+    if (!result.ok) throw new RelayError('invalid', ErrorCode.InvalidParams, `Invalid relay request: ${result.reason}`);
   }
 }

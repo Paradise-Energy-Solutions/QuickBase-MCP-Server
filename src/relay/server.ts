@@ -20,9 +20,14 @@
  */
 
 import http from 'node:http';
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
-import type { RelayRequest, RelayResult, RelayTransport } from './types.js';
+import { Control } from './control.js';
+import type { ControlOptions } from './control.js';
+import { RelayAlreadyRunningError, RelayError, RelayPortInUseError } from './errors.js';
+import { readBody, sendJson } from './httpUtil.js';
+import { probeRelay } from './probe.js';
+import type { RelayRequest, RelayResponseType, RelayResult, RelayTransport } from './types.js';
 import {
   assertValidRelayRequest,
   isFetchModeAllowed,
@@ -45,8 +50,12 @@ interface HelloState {
 const REQUEST_TIMEOUT_MS = 30_000;
 const RELAY_ACTIVE_TTL_MS = 5 * 60 * 1000; // 5 minutes since last hello
 const LONG_POLL_TIMEOUT_MS = 28_000; // hold long-poll just under the client timeout
-const MAX_BODY_BYTES = 1_048_576; // 1 MB — protect against runaway payloads
 const RETRY_DELAYS_MS = [500, 500, 1000, 1000, 2000]; // EADDRINUSE backoff — ~5 s total
+
+export interface RelayClientOptions {
+  /** How long a request may wait for the bookmarklet's answer (default 30 s). */
+  requestTimeoutMs?: number;
+}
 
 export class RelayClient implements RelayTransport {
   private pending: Map<string, PendingEntry> = new Map();
@@ -54,9 +63,21 @@ export class RelayClient implements RelayTransport {
   private longPollRes: http.ServerResponse | null = null;
   private helloState: HelloState | null = null;
   private port: number;
+  private readonly requestTimeoutMs: number;
 
-  constructor(port: number) {
+  constructor(port: number, opts: RelayClientOptions = {}) {
     this.port = port;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  }
+
+  /** Requests sent to the bookmarklet that have not been answered yet. */
+  get pendingCount(): number {
+    return this.pending.size;
+  }
+
+  /** Requests waiting for the bookmarklet's next poll. */
+  get queuedCount(): number {
+    return this.queue.length;
   }
 
   /** Called by the relay HTTP server when the bookmarklet POSTs /relay/hello */
@@ -86,6 +107,12 @@ export class RelayClient implements RelayTransport {
       this.longPollRes.writeHead(204).end();
     }
     this.longPollRes = res;
+    // A dropped connection (tab closed or reloaded) must not stay registered: the
+    // next request would be written to a dead socket and lost. Forget it instead,
+    // so the request waits for the bookmarklet's next poll.
+    res.on('close', () => {
+      if (this.longPollRes === res) this.longPollRes = null;
+    });
     this.dispatchNextRequest();
 
     // Auto-close after LONG_POLL_TIMEOUT_MS so the bookmarklet reconnects
@@ -113,17 +140,14 @@ export class RelayClient implements RelayTransport {
     method: string,
     body?: unknown,
     extraHeaders?: Record<string, string>,
-    responseType: 'json' | 'text' = 'json'
+    responseType: RelayResponseType = 'json'
   ): Promise<RelayResult> {
     // The bookmarklet does fetch(PL + path) with the user's CSRF token, so the
     // path is validated before anything can be queued, ahead of the active check.
     assertValidRelayRequest(path, method, extraHeaders);
 
     if (!this.isActive) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        this.notActiveMessage()
-      );
+      throw new RelayError('not_active', ErrorCode.InternalError, this.notActiveMessage());
     }
 
     const req: RelayRequest = { id: randomUUID(), path, method, body, headers: extraHeaders, responseType };
@@ -131,11 +155,11 @@ export class RelayClient implements RelayTransport {
     return new Promise<RelayResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(req.id);
-        reject(new McpError(
-          ErrorCode.InternalError,
-          this.timeoutMessage()
-        ));
-      }, REQUEST_TIMEOUT_MS);
+        // Withdraw it from the queue too: a request nobody is waiting for must
+        // never run late (a stale impersonation start would be dangerous).
+        this.queue = this.queue.filter((queued) => queued.id !== req.id);
+        reject(new RelayError('timeout', ErrorCode.InternalError, this.timeoutMessage()));
+      }, this.requestTimeoutMs);
       timer.unref();
 
       this.pending.set(req.id, { resolve, reject, timer });
@@ -173,7 +197,7 @@ export class RelayClient implements RelayTransport {
       '   Direct link: https://<your-realm>/nav/main/action/pipelines/dashboard',
       '4. You will see a confirmation message. Then retry this tool.',
       '',
-      'If the MCP server was recently restarted: restart it completely, wait for it to finish starting, then click the bookmarklet again.',
+      'The relay runs as one shared background daemon, so this is needed only once per browser tab: it keeps running when Claude sessions start or close, and a Pipelines tab you already activated reconnects by itself within a few seconds if the daemon restarts. Click the bookmarklet again only if the tab was closed or reloaded.',
     ].join('\n');
   }
 
@@ -181,18 +205,17 @@ export class RelayClient implements RelayTransport {
     return [
       'The QuickBase Pipeline relay timed out.',
       '',
-      'The browser tab running the relay may have been closed, navigated away, or gone idle.',
+      'The browser tab running the relay may have been closed, reloaded, navigated away, or gone idle.',
       'Navigate to the QuickBase Pipelines dashboard and click the "QB Pipeline Relay" bookmarklet to reconnect, then retry this tool.',
       '(The bookmarklet only works from the Pipelines dashboard page, not other QuickBase pages.)',
-      'If the MCP server was recently restarted, restart it completely before clicking the bookmarklet again.',
       `Setup page: http://localhost:${this.port}/setup`,
     ].join('\n');
   }
 
   /**
-   * Gracefully tear down the relay: reject pending tool requests and close any
-   * open long-poll connection. Called when another relay instance signals this
-   * server to shut down via POST /relay/shutdown.
+   * Gracefully tear down the relay: reject pending tool requests, drop anything
+   * still queued and close any open long-poll connection. Called when the
+   * daemon stops.
    */
   shutdown(): void {
     if (this.longPollRes && !this.longPollRes.writableEnded) {
@@ -203,31 +226,40 @@ export class RelayClient implements RelayTransport {
     }
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer);
-      entry.reject(new McpError(ErrorCode.InternalError, 'Relay server shutting down'));
+      entry.reject(new RelayError('shutting_down', ErrorCode.InternalError, 'Relay server shutting down'));
     }
     this.pending.clear();
+    this.queue = [];
   }
 }
 
 /**
- * Generates the one-time HTML setup page that walks the user through
- * installing the bookmarklet and activating the relay.
+ * Validate realm before interpolating into HTML or JavaScript to prevent latent
+ * XSS if the value ever flows from a less-trusted config source: only
+ * [a-zA-Z0-9.-] survive.
+ */
+function sanitiseRealm(realm: string): string {
+  return realm.replace(/[^a-zA-Z0-9.-]/g, '');
+}
+
+/**
+ * The bookmarklet's JavaScript source. Exported so tests can run the exact
+ * string browsers execute. Its text and the three endpoints it calls
+ * (/relay/hello, /relay/pending, /relay/result/:id) must stay stable: installed
+ * bookmarks never refresh, so the daemon has to keep serving them. A golden hash
+ * in tests/relay-bookmarklet.test.ts pins it.
  *
  * @param realm - The QuickBase realm hostname (e.g. "myorg.quickbase.com").
- *   Only [a-zA-Z0-9.-] pass through sanitisation before interpolation.
  * @param port - The TCP port the relay server is listening on.
- * @returns A complete HTML document string ready to serve as text/html.
  */
-function buildSetupPage(realm: string, port: number): string {
-  // Validate realm before interpolating into HTML to prevent latent XSS if
-  // the value ever flows from a less-trusted config source.
-  const safeRealm = realm.replace(/[^a-zA-Z0-9.-]/g, '');
+export function buildBookmarkletSource(realm: string, port: number): string {
+  const safeRealm = sanitiseRealm(realm);
   const pipelinesBase = `https://${safeRealm.replace('quickbase.com', 'pipelines.quickbase.com')}`;
   const relayBase = `http://localhost:${port}`;
 
   // Bookmarklet source — minified inline JS
   // Uses window.PIPELINES_PAGE_TOKEN (QB sets this on every page) as the CSRF token.
-  const bookmarkletSrc = `(function(){
+  return `(function(){
 var B='${relayBase}';
 var PL='${pipelinesBase}';
 var T=window['PIPELINES_PAGE_TOKEN'];
@@ -259,8 +291,20 @@ fetch(B+'/relay/result/'+req.id,{method:'POST',headers:{'Content-Type':'applicat
 poll();
 alert('\\u2705 QB Pipeline Relay active!');
 })();`;
+}
 
-  const encoded = `javascript:${encodeURIComponent(bookmarkletSrc)}`;
+/**
+ * Generates the HTML setup page that walks the user through installing the
+ * bookmarklet and activating the relay.
+ *
+ * @param realm - The QuickBase realm hostname (e.g. "myorg.quickbase.com").
+ *   Only [a-zA-Z0-9.-] pass through sanitisation before interpolation.
+ * @param port - The TCP port the relay server is listening on.
+ * @returns A complete HTML document string ready to serve as text/html.
+ */
+export function buildSetupPage(realm: string, port: number): string {
+  const safeRealm = sanitiseRealm(realm);
+  const encoded = `javascript:${encodeURIComponent(buildBookmarkletSource(realm, port))}`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -319,51 +363,23 @@ alert('\\u2705 QB Pipeline Relay active!');
   <div class="step-num">4</div>
   <div class="step-body">
     <h3>Keeping the relay alive</h3>
-    <p>The bookmarklet automatically sends a keepalive every 4 minutes and will restart the polling loop if it stalls, so it should stay active indefinitely while the Pipelines tab is open. If you do need to reconnect (e.g. after closing the tab or restarting the MCP server), restart the MCP server completely, return to the <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a>, and click the bookmarklet again.</p>
+    <p>The relay runs as one shared background daemon, so you only click the bookmarklet once per browser tab, however many Claude sessions you open or close. The bookmarklet sends a keepalive every 4 minutes and reconnects by itself within a few seconds if the daemon restarts, so a Pipelines tab you already activated stays connected for as long as it is open. If you close or reload the tab, return to the <a href="https://${safeRealm}/nav/main/action/pipelines/dashboard" target="_blank">Pipelines dashboard</a> and click the bookmarklet again.</p>
   </div>
 </div>
 
 <div class="status-bar" id="status">Checking relay status&hellip;</div>
+<p class="drag-hint" id="daemon"></p>
 
 <script>
 fetch('/relay/status').then(r=>r.json()).then(d=>{
   const el=document.getElementById('status');
   if(d.active){el.style.background='#e6f4ea';el.style.color='#1e7e34';el.innerHTML='&#10003; <span>Relay is active.</span> Pipeline tools are ready.';}
   else{el.innerHTML='&#9888; <span>Relay is not yet active.</span> Follow steps 2 and 3 above.';}
+  if(d.pid){document.getElementById('daemon').textContent='Relay daemon pid '+d.pid+' · build '+d.buildVersion+' · '+d.clients+' connected session(s) · up '+d.uptimeSec+' s';}
 }).catch(()=>{});
 </script>
 </body>
 </html>`;
-}
-
-/**
- * Reads and JSON-parses the body of an incoming HTTP request.
- * Rejects if the body exceeds MAX_BODY_BYTES or is not valid JSON.
- * An empty body resolves to `null`.
- *
- * @param req - The raw Node.js incoming message to read from.
- * @returns A Promise that resolves to the parsed JSON value.
- */
-function readBody(req: http.IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let bytesRead = 0;
-    req.on('data', (chunk: Buffer) => {
-      bytesRead += chunk.length;
-      if (bytesRead > MAX_BODY_BYTES) {
-        req.destroy();
-        reject(new Error('Request body exceeds 1 MB limit'));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8');
-      try { resolve(JSON.parse(raw || 'null')); }
-      catch { reject(new Error('Invalid JSON body')); }
-    });
-    req.on('error', reject);
-  });
 }
 
 /** Applies CORS response headers, restricting the allowed origin to the QB realm. */
@@ -402,22 +418,49 @@ function refuseUnlessBookmarklet(
   return true;
 }
 
+export interface RelayServerOptions {
+  /** Enables the authenticated daemon control API (rpc, lock, stop, info). Omit for a plain relay. */
+  control?: ControlOptions;
+  /** How long a request may wait for the bookmarklet's answer (default 30 s). */
+  requestTimeoutMs?: number;
+  /** Where log lines go (default: stderr). */
+  log?: (line: string) => void;
+  /** Called on bookmarklet and client traffic (not on probes); feeds the daemon's idle timeout. */
+  onActivity?: () => void;
+}
+
+export interface RelayServer {
+  readonly client: RelayClient;
+  readonly port: number;
+  /**
+   * Resolves once the server is listening. Rejects with RelayAlreadyRunningError when a
+   * healthy relay daemon already holds the port, or RelayPortInUseError when something
+   * else keeps it after the retries. Never an unhandled rejection if nobody awaits it.
+   */
+  readonly ready: Promise<void>;
+  /** Stops listening, rejects pending requests and releases the port. Safe to call repeatedly. */
+  close(): Promise<void>;
+}
+
 /**
- * Starts the relay HTTP server and returns the RelayClient that MCP tool handlers
- * use to enqueue requests and await results from the bookmarklet.
+ * Starts the relay HTTP server. Binds to 127.0.0.1 only.
  *
- * Binds to 127.0.0.1 only. On EADDRINUSE, backs off and retries up to
- * RETRY_DELAYS_MS.length times, sending a shutdown probe to any occupying relay
- * server on the first attempt.
+ * On EADDRINUSE it asks the occupant who it is (GET /relay/info). A healthy relay
+ * daemon means this newcomer has nothing to do (RelayAlreadyRunningError); anything
+ * else is retried with a short backoff, since the port may still be in TIME_WAIT
+ * after a previous process exited. It never asks the occupant to shut down: replacing
+ * a daemon or a legacy relay is the launcher's explicit, authenticated decision.
  *
  * @param realm - The QuickBase realm hostname (e.g. "myorg.quickbase.com").
  *   Used to restrict CORS and to build the setup-page URL.
  * @param port - The TCP port to listen on.
- * @returns The RelayClient instance; MCP tool handlers call `client.request()` on it.
  */
-export function startRelayServer(realm: string, port: number): RelayClient {
-  const client = new RelayClient(port);
+export function startRelayServer(realm: string, port: number, options: RelayServerOptions = {}): RelayServer {
+  const log = options.log ?? ((line: string) => console.error(line));
+  const onActivity = options.onActivity ?? (() => {});
+  const client = new RelayClient(port, { requestTimeoutMs: options.requestTimeoutMs });
   const allowedOrigin = `https://${realm}`;
+  const control = options.control ? new Control({ client, options: options.control, log, onActivity }) : undefined;
 
   const server = http.createServer(async (req, res) => {
     // DNS-rebinding defence: refuse before emitting any CORS headers.
@@ -435,6 +478,8 @@ export function startRelayServer(realm: string, port: number): RelayClient {
 
     const url = req.url ?? '/';
 
+    if (control && (await control.handle(req, res))) return;
+
     // ── GET /setup ──────────────────────────────────────────────────────────
     if (req.method === 'GET' && url === '/setup') {
       const html = buildSetupPage(realm, port);
@@ -445,34 +490,27 @@ export function startRelayServer(realm: string, port: number): RelayClient {
 
     // ── GET /relay/status ────────────────────────────────────────────────────
     if (req.method === 'GET' && url === '/relay/status') {
-      const body = JSON.stringify({ active: client.isActive, realmUser: client.currentUser });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(body);
+      sendJson(res, 200, { active: client.isActive, realmUser: client.currentUser, ...control?.statusExtras() });
       return;
     }
 
-    // ── POST /relay/shutdown ─────────────────────────────────────────────────
-    // Called by a new relay instance to ask this server to release the port
-    // gracefully. POST-only + explicit Origin check prevents CSRF from arbitrary
-    // web pages: a same-process shutdown (no Origin header) is always accepted;
-    // a cross-site request carrying a non-QB Origin is rejected with 403.
+    // ── POST /relay/shutdown (legacy) ────────────────────────────────────────
+    // Old builds POST here when they find the port taken, to make the holder step
+    // aside. The relay is now one daemon shared by every session, so it is refused
+    // whoever asks; stopping it takes the authenticated /relay/stop.
     if (req.method === 'POST' && url === '/relay/shutdown') {
-      const origin = req.headers.origin as string | undefined;
-      if (!isOriginAllowed(origin, allowedOrigin)) {
-        sendForbidden(res);
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
-      client.shutdown();
-      setImmediate(() => server.close());
-      console.error('QB Pipeline relay server: received shutdown signal — closing to allow restart.');
+      log('refused POST /relay/shutdown (legacy shutdown request; this relay is a shared daemon)');
+      sendJson(res, 403, {
+        error: 'Forbidden',
+        message: 'This relay is shared by every Claude session and cannot be shut down this way. To stop it, run: npm run relay:stop',
+      });
       return;
     }
 
     // ── GET /relay/pending ────────────────────────────────────────────────────
     if (req.method === 'GET' && url === '/relay/pending') {
       if (refuseUnlessBookmarklet(req, res, allowedOrigin)) return;
+      onActivity();
       client.registerLongPoll(res);
       return;
     }
@@ -480,6 +518,7 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     // ── POST /relay/hello ─────────────────────────────────────────────────────
     if (req.method === 'POST' && url === '/relay/hello') {
       if (refuseUnlessBookmarklet(req, res, allowedOrigin)) return;
+      onActivity();
       try {
         const body = await readBody(req) as { csrfToken: string; realm: string };
         if (body?.csrfToken && body?.realm) {
@@ -496,6 +535,7 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     const resultMatch = url.match(/^\/relay\/result\/([a-f0-9-]{36})$/);
     if (req.method === 'POST' && resultMatch) {
       if (refuseUnlessBookmarklet(req, res, allowedOrigin)) return;
+      onActivity();
       try {
         const result = await readBody(req) as RelayResult;
         client.receiveResult(resultMatch[1], result);
@@ -509,53 +549,87 @@ export function startRelayServer(realm: string, port: number): RelayClient {
     res.writeHead(404).end();
   });
 
+  let closing = false;
   let attempt = 0;
   let elapsedMs = 0; // cumulative ms already waited across previous EADDRINUSE retries
+  let retryTimer: NodeJS.Timeout | undefined;
+
+  let resolveReady: () => void = () => {};
+  let rejectReady: (err: Error) => void = () => {};
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  ready.catch(() => {}); // an unawaited `ready` must never become an unhandled rejection
 
   function tryListen(): void {
-    server.listen(port, '127.0.0.1', () => {
-      console.error(`QB Pipeline relay server listening on http://127.0.0.1:${port}`);
-      console.error(`  Setup page: http://localhost:${port}/setup`);
-    });
+    if (closing) return;
+    server.listen(port, '127.0.0.1');
+  }
+
+  server.on('listening', () => {
+    log(`QB Pipeline relay server listening on http://127.0.0.1:${port}`);
+    log(`  Setup page: http://localhost:${port}/setup`);
+    resolveReady();
+  });
+
+  async function handleAddressInUse(): Promise<void> {
+    if (closing) return;
+    if (attempt === 0) {
+      const probe = await probeRelay(port, 1000);
+      if (closing) return;
+      if (probe.kind === 'daemon') {
+        log(`QB Pipeline relay daemon is already running on port ${port} (pid ${probe.info.pid}); not starting another.`);
+        rejectReady(new RelayAlreadyRunningError(probe.info));
+        return;
+      }
+    }
+
+    // The port may still be in TIME_WAIT after the previous process exited (common
+    // during MCP server restarts in VS Code). Back off and retry up to
+    // RETRY_DELAYS_MS.length times before giving up.
+    if (attempt >= RETRY_DELAYS_MS.length) {
+      log(
+        `Warning: QB Pipeline relay port ${port} is still in use after ${attempt} attempts. ` +
+        `Pipeline tools will not be available. ` +
+        `To fix: set QB_RELAY_PORT to an unused port in your .env file, or stop whatever is using the port.`
+      );
+      rejectReady(new RelayPortInUseError(port, attempt));
+      return;
+    }
+    const delay = RETRY_DELAYS_MS[attempt];
+    attempt++;
+    log(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsedMs} ms elapsed so far)`);
+    elapsedMs += delay;
+    server.close();
+    retryTimer = setTimeout(tryListen, delay);
+    retryTimer.unref();
   }
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      // Port may still be in TIME_WAIT after the previous process was killed
-      // (common during MCP server restarts in VS Code). Back off and retry up
-      // to RETRY_DELAYS_MS.length times before giving up.
-      if (attempt >= RETRY_DELAYS_MS.length) {
-        console.error(
-          `Warning: QB Pipeline relay port ${port} is still in use after ${attempt} attempts. ` +
-          `Pipeline tools will not be available. ` +
-          `To fix: set QB_RELAY_PORT to an unused port in your .env file, or wait a moment and restart the server.`
-        );
-      } else {
-        const delay = RETRY_DELAYS_MS[attempt];
-        attempt++;
-        console.error(`QB Pipeline relay port ${port} busy — retrying in ${delay} ms… (attempt ${attempt}/${RETRY_DELAYS_MS.length}, ${elapsedMs} ms elapsed so far)`);
-        elapsedMs += delay;
-        // On the first attempt, ask the existing relay server to shut down so
-        // the port is released sooner than its natural process-exit.
-        if (attempt === 1) {
-          const shutdownBody = '{}';
-          const shutdownReq = http.request(
-            { host: '127.0.0.1', port, path: '/relay/shutdown', method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(shutdownBody) },
-              timeout: 1000 },
-            (r) => { r.resume(); }
-          );
-          shutdownReq.on('error', () => {}); // non-QB process on this port — ignore
-          shutdownReq.end(shutdownBody);
-        }
-        server.close();
-        setTimeout(tryListen, delay).unref();
-      }
-    } else {
-      console.error(`QB Pipeline relay server error: ${err.message}`);
+      void handleAddressInUse();
+      return;
     }
+    log(`QB Pipeline relay server error: ${err.message}`);
+    rejectReady(err);
   });
 
+  let closePromise: Promise<void> | undefined;
+  function close(): Promise<void> {
+    if (closePromise) return closePromise;
+    closing = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    control?.shutdown();
+    client.shutdown();
+    rejectReady(new Error('Relay server closed')); // no effect once ready has settled
+    closePromise = new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    });
+    return closePromise;
+  }
+
   tryListen();
-  return client;
+  return { client, port, ready, close };
 }
