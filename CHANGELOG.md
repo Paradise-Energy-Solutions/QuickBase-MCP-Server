@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Pipeline relay is now one shared background daemon** (`dist/relay/daemon.js`) instead of a server inside every MCP process. Previously each Claude session started its own relay and the newest one took the port, so only the most recently started session's Pipeline tools worked. Now every session talks to the single daemon over authenticated loopback HTTP, the first session starts it (detached, so it survives sessions closing), and you click the bookmarklet once per browser tab. An already-open Pipelines tab re-attaches by itself if the daemon restarts; the bookmarklet itself is unchanged.
+- Pipeline impersonation is serialised across sessions by an exclusive lock held from start to end (with a TTL; an abandoned impersonation is ended by the daemon), so one session's call can no longer run as another's identity.
+- The relay no longer shuts down whatever holds its port. A healthy daemon is never stopped by a newcomer; an older daemon is replaced only when idle, and an active old-build relay only with `QB_RELAY_REPLACE_LEGACY=true`.
+- New commands `npm run relay:start`, `relay:stop` and `relay:status`; new settings `QB_RELAY_IDLE_MINUTES`, `QB_RELAY_STATE_DIR`, `QB_RELAY_LOCK_TTL_SECONDS`, `QB_RELAY_LOCK_WAIT_SECONDS` and `QB_RELAY_REPLACE_LEGACY` (see `env.example` and the README).
+
+### Security
+- Relay requests are validated before they can be queued: the path must start with `/api/` and contain no `//`, `..`, `@`, backslash, scheme or non-ASCII characters, so the bookmarklet's CSRF token cannot be steered to another host.
+- Every relay endpoint now checks the `Host` header (DNS rebinding); `/relay/hello` and `/relay/pending` also require the QuickBase origin and a CORS-mode fetch (previously only `/relay/result` did).
+- The daemon's control API requires a per-user secret (owner-only file, constant-time compare) and refuses any request carrying an `Origin` or `Sec-Fetch-*` header. The daemon is started with only relay settings in its environment, never `QB_USER_TOKEN`.
+
+### Fixed
+- A relay request that timed out while still queued could later run in the browser anyway; it is now withdrawn.
+- A dropped bookmarklet connection (closed or reloaded tab) no longer swallows the next request.
+
 ## [1.0.0] - 2024-12-11
 
 ### Added

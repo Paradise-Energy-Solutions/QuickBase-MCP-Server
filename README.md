@@ -232,6 +232,88 @@ App registration is read from the `.env` file in the server's package directory.
 - `quickbase_get_reports` - Get all reports
 - `quickbase_run_report` - Run specific report
 
+### Pipeline Tools (unofficial API)
+- `quickbase_list_pipelines`, `quickbase_get_pipeline`, `quickbase_get_pipeline_step`, `quickbase_get_pipeline_yaml`, `quickbase_get_pipeline_activity`, `quickbase_get_pipeline_trigger_summary`, `quickbase_batch_get_pipeline_steps` - Inspect QuickBase Pipelines
+- `quickbase_find_pipeline_users` - Look up a user ID by name or email
+- `quickbase_start_impersonation`, `quickbase_end_impersonation` - Act as another user across several calls (or pass `impersonateUserId` to a single call)
+
+These tools need the **Pipeline relay** described next.
+
+## Pipeline Relay (shared daemon)
+
+> **Unofficial API.** QuickBase's official API ([OpenAPI spec](https://developer.quickbase.com/qb-openapi-v3.json)) does not cover Pipelines or impersonation. The tools above call the endpoints the Pipelines web app itself uses (`/api/v2/pipelines/...`, `/api/pipeohod/...`, `/api/impersonation/...`). They have no machine-to-machine authentication and **may change or break without notice**.
+
+Pipelines only answer to a logged-in browser session, so the MCP server cannot call them directly. Instead a small **relay** passes each request to a bookmarklet running in your own QuickBase tab, which makes the call with your session and hands the result back.
+
+### How it works
+
+The relay runs as **one shared background daemon** on `127.0.0.1:3737` (`QB_RELAY_PORT`), not inside each MCP server:
+
+- Every Claude session starts its own MCP server process, but none of them binds the relay port. They talk to the daemon over authenticated loopback HTTP.
+- The first session that needs the relay starts the daemon (detached, so it survives that session closing). Later sessions find it running. If it has exited (idle timeout, crash, upgrade) the next Pipeline call starts it again.
+- You click the bookmarklet **once per browser tab**, however many Claude sessions you open or close. If the daemon restarts, an already-open Pipelines tab reconnects by itself within a few seconds.
+- Requests from all sessions share the one browser connection and are served in order.
+
+### One-time setup
+
+1. Open `http://localhost:3737/setup` and drag the **QB Pipeline Relay** button to your bookmarks bar. (The daemon starts when a Claude session starts the QuickBase MCP server, so the page is available as soon as you have one open; or run `npm run relay:start`.)
+2. Open the QuickBase Pipelines dashboard (`https://<your-realm>/nav/main/action/pipelines/dashboard`) while logged in.
+3. Click the bookmarklet. You will see "QB Pipeline Relay active!".
+
+Click it again only if you close or reload the tab. The bookmarklet itself did not change, so a bookmark you installed earlier keeps working.
+
+### Commands
+
+```bash
+npm run relay:status   # is it running? pid, build, connected sessions, impersonation lock
+npm run relay:stop     # ask it to stop (authenticated; it never signals a process)
+npm run relay:start    # run it in the foreground (normally started automatically)
+```
+
+Add `-- --port 3799` to act on another port. State lives in `%LOCALAPPDATA%\quickbase-mcp\` on Windows (`~/.local/state/quickbase-mcp/` elsewhere): `relay.secret`, `relay.<port>.pid` and `relay.<port>.log`.
+
+### Settings
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `QB_RELAY_PORT` | `3737` | Port the daemon listens on (loopback only). |
+| `QB_RELAY_IDLE_MINUTES` | `60` | Exit after this long with no client traffic and no connected bookmarklet (`0` = never). It is started again on demand. |
+| `QB_RELAY_STATE_DIR` | per user (above) | Where the secret, pid and log files live. |
+| `QB_RELAY_LOCK_TTL_SECONDS` | `300` | An impersonation with no activity this long is treated as abandoned and ended by the daemon. |
+| `QB_RELAY_LOCK_WAIT_SECONDS` | `20` | How long another session waits behind an impersonation before getting a "busy" message. |
+| `QB_RELAY_REPLACE_LEGACY` | off | Migration only: see below. |
+
+### Impersonation across sessions
+
+Impersonation changes state in your *browser session*, so two Claude sessions must never interleave. The daemon holds an exclusive lock from the moment an impersonation starts until it ends; other sessions' Pipeline calls wait, and answer "busy" (naming the holder) if the wait runs out. An abandoned impersonation is ended by the daemon after `QB_RELAY_LOCK_TTL_SECONDS`.
+
+### Security model
+
+- The daemon listens on `127.0.0.1` only and rejects any request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding).
+- Calls from MCP processes need a per-user secret (`relay.secret`, created with owner-only permissions) sent in a custom header and compared in constant time. Any request carrying an `Origin` or `Sec-Fetch-*` header is refused even with the right secret, so a web page cannot drive the daemon.
+- The bookmarklet endpoints accept only your QuickBase origin and refuse requests a browser did not issue as a CORS fetch (such as an `<img>` pointed at the relay).
+- Every relayed path must start with `/api/` with no `//`, `..`, `@`, backslash, scheme or non-ASCII characters, so a path can never steer your CSRF token to another host.
+- The daemon is started with only the realm and relay settings in its environment: never `QB_USER_TOKEN` or your app registry. Its log records the method and path (no query string, no user look-ups, no bodies) and never the secret or the CSRF token.
+
+### Upgrading from an older build
+
+Older builds ran one relay *per Claude session*, and the newest session took the port from the others. After you rebuild:
+
+1. Start new Claude sessions as usual. The first one replaces an **inactive** old relay on its own.
+2. An old relay that still has your bookmarklet connected is **not** shut down by surprise. That session reports how to migrate: either close the Claude sessions still running the old build, or set `QB_RELAY_REPLACE_LEGACY=true` in `.env` once and restart that session. Remove the setting afterwards.
+3. A daemon from an older build is replaced automatically, but only when that interrupts nobody (no bookmarklet connected, nothing queued, no impersonation); otherwise the message names its pid and version. Run `npm run relay:stop` when convenient.
+
+### Troubleshooting
+
+- **"The QuickBase Pipeline relay is not active"**: no bookmarklet is connected. Open the Pipelines dashboard and click the bookmarklet.
+- **"The QuickBase Pipeline relay daemon is not available"**: it could not be started. Run `npm run relay:status` and read `relay.<port>.log` in the state directory. A common cause is another program on the port: set `QB_RELAY_PORT`.
+- **"busy"**: another Claude session is impersonating someone; retry in a few seconds.
+- **The relay stops when the Claude session that started it closes** (Windows can tie a child process to its parent's job): run `npm run relay:start` in a terminal, or add it to your Startup folder, and let the maintainers know so a different start method can be added.
+
+### Why not a userscript?
+
+A userscript manager (Tampermonkey and similar) could run the bookmarklet code automatically whenever the Pipelines dashboard is open, so activation becomes "have the dashboard open". It is not built in because it needs a userscript manager installed and a check of the `@match` and Content-Security-Policy behaviour against a live QuickBase page. The bookmarklet source is exposed by the setup page if you want to try it.
+
 ## Example Usage
 
 ### List registered apps (always start here):
