@@ -82,8 +82,7 @@ function isOlderBuild(info: RelayInfo, mine: BuildInfo): boolean {
 }
 
 export async function ensureRelayDaemon(opts: LauncherOptions): Promise<EnsureOutcome> {
-  const probe = (opts.probe ?? probeRelay)(opts.port);
-  const found = await probe;
+  const found = await (opts.probe ?? probeRelay)(opts.port);
   switch (found.kind) {
     case 'daemon':
       return useExisting(opts, found.info);

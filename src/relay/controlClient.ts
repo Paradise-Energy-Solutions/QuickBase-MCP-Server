@@ -5,9 +5,9 @@
  */
 
 import http from 'node:http';
+import { RELAY_SECRET_HEADER } from './types.js';
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const SECRET_HEADER = 'X-QB-Relay-Secret';
 
 /**
  * A failure below HTTP: the connection was refused, reset or timed out.
@@ -54,7 +54,7 @@ function exchange(target: ControlTarget, method: 'GET' | 'POST', path: string, p
       headers['Content-Type'] = 'application/json';
       headers['Content-Length'] = Buffer.byteLength(data);
     }
-    if (target.secret) headers[SECRET_HEADER] = target.secret;
+    if (target.secret) headers[RELAY_SECRET_HEADER] = target.secret;
 
     // agent:false = a fresh connection per call. A pooled keep-alive socket to a daemon
     // that has since exited fails with ECONNRESET rather than ECONNREFUSED, which would

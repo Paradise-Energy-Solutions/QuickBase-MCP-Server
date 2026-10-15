@@ -8,8 +8,8 @@ export type RelayResponseType = 'json' | 'text';
 /** Bumped whenever the daemon's HTTP contract changes in a way an older MCP cannot speak. */
 export const RELAY_PROTOCOL_VERSION = 1;
 
-/** Header carrying the per-user secret on authenticated daemon calls (lower-case as Node exposes it). */
-export const RELAY_SECRET_HEADER = 'x-qb-relay-secret';
+/** Header carrying the per-user secret on authenticated daemon calls (Node exposes it lower-cased). */
+export const RELAY_SECRET_HEADER = 'X-QB-Relay-Secret';
 
 /** What GET /relay/info returns: identity and build of a running daemon. No secrets. */
 export interface RelayInfo {

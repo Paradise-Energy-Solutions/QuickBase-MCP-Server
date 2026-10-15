@@ -189,7 +189,7 @@ export class Control {
       this.fail(res, 403, 'forbidden', 'Browser requests are not accepted');
       return false;
     }
-    if (!secretsMatch(req.headers[RELAY_SECRET_HEADER], this.deps.options.secret)) {
+    if (!secretsMatch(req.headers[RELAY_SECRET_HEADER.toLowerCase()], this.deps.options.secret)) {
       this.deps.log(`refused ${req.method} ${url}: missing or invalid relay secret (401)`);
       this.fail(res, 401, 'unauthorized', 'Missing or invalid relay secret');
       return false;
