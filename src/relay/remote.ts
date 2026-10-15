@@ -120,6 +120,15 @@ export class RemoteRelayClient implements RelayTransport {
     this.expectOk(await this.exchange('/relay/lock/release', { owner: this.ownerId }, this.rpcTimeoutMs));
   }
 
+  /**
+   * Starts the daemon in the background so the first Pipeline call finds it ready.
+   * Never rejects and never blocks MCP startup; a failure resurfaces (and is
+   * retried) when a request needs the daemon.
+   */
+  warmUp(): Promise<void> {
+    return this.ensureReady().catch(() => undefined);
+  }
+
   /** Refreshes isActive/currentUser from GET /relay/status. Keeps the last known state if the daemon cannot be reached. */
   async refreshStatus(): Promise<void> {
     try {

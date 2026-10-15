@@ -9,8 +9,14 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { QuickBaseClient } from './quickbase/client.js';
-import { startRelayServer, RelayClient } from './relay/server.js';
+import { computeBuildInfo } from './relay/daemonRuntime.js';
+import { ensureRelayDaemon } from './relay/launcher.js';
+import { RemoteRelayClient } from './relay/remote.js';
+import { ensureSecret, resolveStateDir } from './relay/secret.js';
 import {
   quickbaseTools,
   TableIdSchema,
@@ -46,7 +52,7 @@ import {
   StartImpersonationSchema
 } from './tools/index.js';
 import { AppConfig, QuickBaseConfig } from './types/quickbase.js';
-import { loadAppRegistry, loadDotenv } from './utils/env.js';
+import { envFlag, loadAppRegistry, loadDotenv } from './utils/env.js';
 import { formatErrorForLog } from './utils/errors.js';
 import { assertToolAllowed } from './utils/toolGuards.js';
 import { z } from 'zod';
@@ -119,7 +125,7 @@ class QuickBaseMCPServer {
   private baseConfig: Omit<QuickBaseConfig, 'appId'>;
   private appRegistry: Map<string, AppConfig>;
   private clientCache: Map<string, QuickBaseClient>;
-  private relayClient: RelayClient | null = null;
+  private relayClient: RemoteRelayClient | null = null;
   private readonly serverName: string;
   private readonly serverVersion: string;
 
@@ -149,8 +155,7 @@ class QuickBaseMCPServer {
     this.serverName = process.env.MCP_SERVER_NAME || 'quickbase-mcp';
     this.serverVersion = process.env.MCP_SERVER_VERSION || '1.0.0';
 
-    const relayPort = parseEnvInt('QB_RELAY_PORT', 3737);
-    this.relayClient = startRelayServer(realm, relayPort).client;
+    this.relayClient = this.createRelayClient(realm, parseEnvInt('QB_RELAY_PORT', 3737));
 
     this.server = new Server(
       { name: this.serverName, version: this.serverVersion },
@@ -158,6 +163,48 @@ class QuickBaseMCPServer {
     );
 
     this.setupHandlers();
+  }
+
+  /**
+   * The Pipelines relay is a shared background daemon, not part of this process:
+   * this MCP only talks to it and never binds the relay port. The daemon is
+   * started in the background (never blocking startup) and again on demand if it
+   * has since exited; see src/relay/launcher.ts.
+   */
+  private createRelayClient(realm: string, port: number): RemoteRelayClient {
+    const stateDir = resolveStateDir();
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    let packageVersion = '0.0.0';
+    try {
+      packageVersion = (JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8')) as { version?: string }).version ?? packageVersion;
+    } catch {
+      /* the version only labels the build; the content hash still identifies it */
+    }
+    const build = computeBuildInfo(path.join(here, 'relay'), packageVersion);
+
+    const remote = new RemoteRelayClient({
+      port,
+      readSecret: () => ensureSecret(stateDir),
+      ensureDaemon: async () => {
+        try {
+          return await ensureRelayDaemon({
+            port,
+            realm,
+            stateDir,
+            daemonPath: path.join(here, 'relay', 'daemon.js'),
+            build,
+            env: process.env,
+            replaceLegacy: envFlag('QB_RELAY_REPLACE_LEGACY'),
+            log: (line) => console.error(`QB Pipeline relay: ${line}`),
+          });
+        } catch (err) {
+          console.error(`QB Pipeline relay: ${err instanceof Error ? err.message : String(err)}`);
+          throw err;
+        }
+      },
+    });
+    void remote.warmUp();
+    return remote;
   }
 
   /**

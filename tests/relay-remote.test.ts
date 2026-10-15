@@ -256,6 +256,35 @@ describe('starting the daemon lazily', () => {
   });
 });
 
+describe('warmUp() (called at MCP startup)', () => {
+  it('starts the daemon in the background, and the first request does not start it again', async () => {
+    const d = await daemon();
+    await bookmarklet(d.port);
+    const ensureDaemon = jest.fn(async () => ({ started: false }));
+    const remote = client(d.port, { ensureDaemon });
+
+    await remote.warmUp();
+    expect(ensureDaemon).toHaveBeenCalledTimes(1);
+    await remote.request('/api/x', 'GET');
+
+    expect(ensureDaemon).toHaveBeenCalledTimes(1);
+  });
+
+  it('never rejects: a launcher failure is swallowed and surfaces (and is retried) on the next request', async () => {
+    const s = await spy((_req, res) => json(res, 200, OK_ANSWER));
+    const ensureDaemon = jest
+      .fn<Promise<{ started: boolean }>, []>()
+      .mockRejectedValueOnce(new Error('port busy'))
+      .mockResolvedValue({ started: false });
+    const remote = client(s.port, { ensureDaemon });
+
+    await expect(remote.warmUp()).resolves.toBeUndefined();
+    await expect(remote.request('/api/x', 'GET')).resolves.toMatchObject({ status: 200 });
+
+    expect(ensureDaemon).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('recovering from a daemon restart', () => {
   it('starts the daemon again when the connection is refused, then retries the request once', async () => {
     const first = await daemon();
