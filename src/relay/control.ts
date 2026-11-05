@@ -14,6 +14,7 @@
  * server before requests reach this module.
  */
 
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import type http from 'node:http';
 import { RelayError } from './errors.js';
 import { readBody, sendJson } from './httpUtil.js';
@@ -79,6 +80,11 @@ export interface ControlDeps {
   log: (line: string) => void;
   /** Reports client activity (feeds the daemon's idle timeout). */
   onActivity: () => void;
+}
+
+/** True once the caller's connection is gone, so its answer could never be delivered. */
+function callerGone(res: http.ServerResponse): boolean {
+  return res.destroyed || res.socket === null || res.socket.destroyed;
 }
 
 /** A path as it may appear in the log: no query string, no personal data in look-ups. */
@@ -284,15 +290,18 @@ export class Control {
     this.markClient(owner);
 
     const admission = await this.lock
-      .admit(owner, this.lockWaitMs, () =>
-        this.deps.client.request(
+      .admit(owner, this.lockWaitMs, () => {
+        // A request that waited behind another client's hold may be granted after its caller
+        // gave up; running it then would apply a write the caller was told had failed.
+        if (callerGone(res)) throw new RelayError('internal', ErrorCode.InternalError, 'The caller disconnected before the request ran');
+        return this.deps.client.request(
           path,
           method,
           body.body,
           body.headers as Record<string, string> | undefined,
           body.responseType as RelayResponseType | undefined
-        )
-      )
+        );
+      })
       .catch((err: unknown) => err as Error);
     if (admission instanceof Error) {
       this.answerError(res, admission, method, path, started);
@@ -342,6 +351,11 @@ export class Control {
     const granted = await this.lock.acquire(owner, Math.min(requested, this.lockWaitMs));
     if (!granted) {
       this.busy(res, this.lock.holder);
+      return;
+    }
+    if (callerGone(res)) {
+      this.lock.release(owner); // granted after the caller left: nobody would ever release it
+      this.deps.log(`impersonation lock granted to ${owner} after it disconnected; released`);
       return;
     }
     this.deps.log(`impersonation lock acquired by ${owner}`);

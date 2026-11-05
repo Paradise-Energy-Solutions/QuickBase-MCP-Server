@@ -521,7 +521,7 @@ export function startRelayServer(realm: string, port: number, options: RelayServ
       onActivity();
       try {
         const body = await readBody(req) as { csrfToken: string; realm: string };
-        if (body?.csrfToken && body?.realm) {
+        if (typeof body?.csrfToken === 'string' && body.csrfToken && typeof body?.realm === 'string' && body.realm) {
           client.receiveHello(body.csrfToken, body.realm);
         }
         res.writeHead(204).end();
@@ -538,6 +538,10 @@ export function startRelayServer(realm: string, port: number, options: RelayServ
       onActivity();
       try {
         const result = await readBody(req) as RelayResult;
+        if (typeof result !== 'object' || result === null || typeof result.status !== 'number') {
+          res.writeHead(400).end(); // not a relay result: never resolve a pending call with it
+          return;
+        }
         client.receiveResult(resultMatch[1], result);
         res.writeHead(204).end();
       } catch {
@@ -575,14 +579,13 @@ export function startRelayServer(realm: string, port: number, options: RelayServ
 
   async function handleAddressInUse(): Promise<void> {
     if (closing) return;
-    if (attempt === 0) {
-      const probe = await probeRelay(port, 1000);
-      if (closing) return;
-      if (probe.kind === 'daemon') {
-        log(`QB Pipeline relay daemon is already running on port ${port} (pid ${probe.info.pid}); not starting another.`);
-        rejectReady(new RelayAlreadyRunningError(probe.info));
-        return;
-      }
+    // Ask on every attempt: a healthy daemon may start while this one is backing off.
+    const probe = await probeRelay(port, 1000);
+    if (closing) return;
+    if (probe.kind === 'daemon') {
+      log(`QB Pipeline relay daemon is already running on port ${port} (pid ${probe.info.pid}); not starting another.`);
+      rejectReady(new RelayAlreadyRunningError(probe.info));
+      return;
     }
 
     // The port may still be in TIME_WAIT after the previous process exited (common

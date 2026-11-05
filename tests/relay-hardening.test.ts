@@ -234,3 +234,32 @@ describe('startRelayServer — Fetch Metadata (Sec-Fetch-Mode)', () => {
     await stop();
   });
 });
+
+describe('startRelayServer — bookmarklet payload shape', () => {
+  it('POST /relay/result/:id with a body that is not a relay result is refused and resolves nothing', async () => {
+    const { port, client, stop } = await startRelay();
+    client.receiveHello('tok', REALM);
+    const queued = client.request('/api/v2/pipelines/test', 'GET');
+    const legit = await httpReqFull('GET', port, '/relay/pending', undefined, { Origin: REALM_ORIGIN });
+    const id = (legit.body as any).id;
+
+    for (const body of ['', 'null', '"text"', '{"data":1}', '{"status":"200"}']) {
+      const res = await httpReqFull('POST', port, `/relay/result/${id}`, body, { Origin: REALM_ORIGIN });
+      expect(res.statusCode).toBe(400);
+    }
+    await httpReq('POST', port, `/relay/result/${id}`, JSON.stringify({ status: 200, data: {} }));
+    await expect(queued).resolves.toEqual({ status: 200, data: {} });
+    await stop();
+  });
+
+  it('POST /relay/hello with a non-string realm or token does not activate the relay', async () => {
+    const { port, client, stop } = await startRelay();
+
+    await httpReqFull('POST', port, '/relay/hello', JSON.stringify({ csrfToken: 'tok', realm: { x: 1 } }), { Origin: REALM_ORIGIN });
+    await httpReqFull('POST', port, '/relay/hello', JSON.stringify({ csrfToken: 5, realm: REALM }), { Origin: REALM_ORIGIN });
+
+    expect(client.isActive).toBe(false);
+    expect(client.currentUser).toBeNull();
+    await stop();
+  });
+});

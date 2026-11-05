@@ -1280,7 +1280,7 @@ export class QuickBaseClient {
       const kind = (err as { kind?: string } | null)?.kind; // RelayError.kind: set by the shared relay's transport
       const neverSent = kind !== undefined && ['not_active', 'invalid', 'busy'].includes(kind);
       try {
-        if (!neverSent) await relay.request('/api/impersonation/end', 'POST', {});
+        if (!neverSent) this.unwrapRelayResult(await relay.request('/api/impersonation/end', 'POST', {})); // an HTTP error answer is a failed undo too
         await relay.releaseExclusive?.();
       } catch {
         /* keep the lock; the daemon ends the abandoned impersonation when it expires */
