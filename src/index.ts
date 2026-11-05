@@ -150,7 +150,7 @@ class QuickBaseMCPServer {
     this.serverVersion = process.env.MCP_SERVER_VERSION || '1.0.0';
 
     const relayPort = parseEnvInt('QB_RELAY_PORT', 3737);
-    this.relayClient = startRelayServer(realm, relayPort);
+    this.relayClient = startRelayServer(realm, relayPort).client;
 
     this.server = new Server(
       { name: this.serverName, version: this.serverVersion },

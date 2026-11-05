@@ -1,6 +1,6 @@
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { RelayClient, startRelayServer } from '../src/relay/server';
-import { getFreePort, httpReq, httpReqFull, waitForPort } from './helpers/relayHarness';
+import { getFreePort, httpReq, httpReqFull } from './helpers/relayHarness';
 
 // QB-47 hardening: relay path validation, Host (DNS rebinding), Origin and
 // Fetch Metadata checks. Every server below binds an OS-assigned free port.
@@ -10,27 +10,19 @@ const REALM_ORIGIN = `https://${REALM}`;
 const FAKE_RESULT_ID = '00000000-0000-1000-8000-0000000000aa';
 const HELLO_BODY = JSON.stringify({ csrfToken: 'tok', realm: REALM });
 
-/** Starts a relay on a free port; `stop()` shuts it down and restores console.error. */
+/** Starts a relay on a free port; `stop()` closes it. */
 async function startRelay(): Promise<{ port: number; client: RelayClient; stop: () => Promise<void> }> {
-  const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   const port = await getFreePort();
-  const client = startRelayServer(REALM, port);
-  await waitForPort(port);
-  return {
-    port,
-    client,
-    stop: async () => {
-      await httpReq('POST', port, '/relay/shutdown', '{}');
-      consoleSpy.mockRestore();
-    },
-  };
+  const server = startRelayServer(REALM, port, { log: () => {} });
+  await server.ready;
+  return { port, client: server.client, stop: () => server.close() };
 }
 
 describe('RelayClient — request() validation (in-process path)', () => {
   function activeClientWithPoll() {
     const client = new RelayClient(3799);
     client.receiveHello('csrf', REALM);
-    const fakeRes = { writableEnded: false, writeHead: jest.fn().mockReturnThis(), end: jest.fn() } as any;
+    const fakeRes = { writableEnded: false, on: jest.fn(), writeHead: jest.fn().mockReturnThis(), end: jest.fn() } as any;
     client.registerLongPoll(fakeRes);
     return { client, fakeRes };
   }
@@ -239,6 +231,35 @@ describe('startRelayServer — Fetch Metadata (Sec-Fetch-Mode)', () => {
 
     expect(setup.statusCode).toBe(200);
     expect(status.statusCode).toBe(200);
+    await stop();
+  });
+});
+
+describe('startRelayServer — bookmarklet payload shape', () => {
+  it('POST /relay/result/:id with a body that is not a relay result is refused and resolves nothing', async () => {
+    const { port, client, stop } = await startRelay();
+    client.receiveHello('tok', REALM);
+    const queued = client.request('/api/v2/pipelines/test', 'GET');
+    const legit = await httpReqFull('GET', port, '/relay/pending', undefined, { Origin: REALM_ORIGIN });
+    const id = (legit.body as any).id;
+
+    for (const body of ['', 'null', '"text"', '{"data":1}', '{"status":"200"}']) {
+      const res = await httpReqFull('POST', port, `/relay/result/${id}`, body, { Origin: REALM_ORIGIN });
+      expect(res.statusCode).toBe(400);
+    }
+    await httpReq('POST', port, `/relay/result/${id}`, JSON.stringify({ status: 200, data: {} }));
+    await expect(queued).resolves.toEqual({ status: 200, data: {} });
+    await stop();
+  });
+
+  it('POST /relay/hello with a non-string realm or token does not activate the relay', async () => {
+    const { port, client, stop } = await startRelay();
+
+    await httpReqFull('POST', port, '/relay/hello', JSON.stringify({ csrfToken: 'tok', realm: { x: 1 } }), { Origin: REALM_ORIGIN });
+    await httpReqFull('POST', port, '/relay/hello', JSON.stringify({ csrfToken: 5, realm: REALM }), { Origin: REALM_ORIGIN });
+
+    expect(client.isActive).toBe(false);
+    expect(client.currentUser).toBeNull();
     await stop();
   });
 });

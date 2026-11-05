@@ -5,6 +5,67 @@
 
 export type RelayResponseType = 'json' | 'text';
 
+/** Bumped whenever the daemon's HTTP contract changes in a way an older MCP cannot speak. */
+export const RELAY_PROTOCOL_VERSION = 1;
+
+/** Header carrying the per-user secret on authenticated daemon calls (lower-case as Node exposes it). */
+export const RELAY_SECRET_HEADER = 'x-qb-relay-secret';
+
+/** What GET /relay/info returns: identity and build of a running daemon. No secrets. */
+export interface RelayInfo {
+  protocolVersion: number;
+  /** package version + content hash of the relay build, e.g. "1.0.0+3fa9c1d2". */
+  buildVersion: string;
+  /** ISO time of the newest relay build file; orders two builds that share a protocol version. */
+  buildTime: string;
+  pid: number;
+  startedAt: string;
+  /** QuickBase host the daemon was started for. */
+  realm: string;
+}
+
+export type RelayErrorKind =
+  | 'invalid'
+  | 'not_active'
+  | 'timeout'
+  | 'busy'
+  | 'shutting_down'
+  | 'unavailable'
+  | 'internal';
+
+/** Relay state echoed with every RPC answer so callers can cache isActive/currentUser. */
+export interface RpcRelayState {
+  active: boolean;
+  realmUser: string | null;
+}
+
+/** Body of POST /relay/rpc. `owner` identifies the calling MCP process for the impersonation lock. */
+export interface RpcRequestBody {
+  owner: string;
+  path: string;
+  method: string;
+  body?: unknown;
+  headers?: Record<string, string>;
+  responseType?: RelayResponseType;
+}
+
+export interface RpcSuccess {
+  ok: true;
+  result: RelayResult;
+  relay: RpcRelayState;
+}
+
+export interface RpcFailure {
+  ok: false;
+  kind: RelayErrorKind | 'unauthorized' | 'forbidden';
+  message: string;
+  relay?: RpcRelayState;
+  /** Who holds the impersonation lock, for kind "busy". */
+  holder?: { owner: string; since: number };
+}
+
+export type RpcResponse = RpcSuccess | RpcFailure;
+
 /** A request queued for the bookmarklet, as it travels over GET /relay/pending. */
 export interface RelayRequest {
   id: string;

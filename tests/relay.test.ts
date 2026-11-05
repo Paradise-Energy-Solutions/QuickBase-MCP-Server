@@ -1,7 +1,20 @@
 import http from 'node:http';
 import net from 'node:net';
-import { RelayClient, startRelayServer } from '../src/relay/server';
+import { RelayClient, startRelayServer as startRelayServerRaw } from '../src/relay/server';
+import type { RelayServer, RelayServerOptions } from '../src/relay/server';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
+
+// Every server a test in this file starts is closed after that test, so no port or
+// timer outlives it. (The relay has no remote shutdown endpoint any more.)
+const startedServers: RelayServer[] = [];
+function startRelayServer(realm: string, port: number, options?: RelayServerOptions): RelayServer {
+  const server = startRelayServerRaw(realm, port, options);
+  startedServers.push(server);
+  return server;
+}
+afterEach(async () => {
+  await Promise.all(startedServers.splice(0).map((s) => s.close()));
+});
 
 // We test RelayClient in isolation — no actual HTTP server needed.
 // Integration tests for startRelayServer appear at the bottom of this file.
@@ -139,6 +152,7 @@ describe('RelayClient', () => {
       // Simulate a long-poll response object
       const fakeRes = {
         writableEnded: false,
+        on: jest.fn(), // registerLongPoll listens for the connection closing
         writeHead: jest.fn().mockReturnThis(),
         end: jest.fn((body: string) => {
           // Parse what was sent to the long-poll and immediately call receiveResult
@@ -160,6 +174,7 @@ describe('RelayClient', () => {
       let capturedReq: any;
       const fakeRes = {
         writableEnded: false,
+        on: jest.fn(), // registerLongPoll listens for the connection closing
         writeHead: jest.fn().mockReturnThis(),
         end: jest.fn((body: string) => {
           capturedReq = JSON.parse(body);
@@ -240,6 +255,7 @@ describe('RelayClient', () => {
       let capturedReq: any;
       const fakeRes = {
         writableEnded: false,
+        on: jest.fn(), // registerLongPoll listens for the connection closing
         writeHead: jest.fn().mockReturnThis(),
         end: jest.fn((body: string) => {
           capturedReq = JSON.parse(body);
@@ -260,6 +276,7 @@ describe('RelayClient', () => {
       client.receiveHello('csrf', 'test.quickbase.com');
       const fakeRes = {
         writableEnded: false,
+        on: jest.fn(), // registerLongPoll listens for the connection closing
         writeHead: jest.fn().mockReturnThis(),
         end: jest.fn(),
       } as any;
@@ -277,6 +294,7 @@ describe('RelayClient', () => {
       // Register a connection that is already ended before shutdown fires
       const endedRes = {
         writableEnded: true,
+        on: jest.fn(), // registerLongPoll listens for the connection closing
         writeHead: jest.fn().mockReturnThis(),
         end: jest.fn(),
       } as any;
@@ -330,38 +348,6 @@ describe('RelayClient', () => {
 // These tests spin up real HTTP servers and therefore run slightly slower than
 // the pure-unit tests above.
 
-describe('startRelayServer — POST /relay/shutdown endpoint', () => {
-  it('returns { ok: true } when called', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const port = await getFreePort();
-    startRelayServer('test.quickbase.com', port);
-    await waitForPort(port);
-
-    const result = await httpReq('POST', port, '/relay/shutdown', '{}');
-
-    expect(result.statusCode).toBe(200);
-    expect(result.body).toEqual({ ok: true });
-    consoleSpy.mockRestore();
-    // server.close() is triggered via setImmediate inside the handler;
-    // --forceExit handles any residual handle if it closes slowly.
-  });
-
-  it('GET /relay/shutdown returns 404 — only POST is accepted for this endpoint', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const port = await getFreePort();
-    startRelayServer('test.quickbase.com', port);
-    await waitForPort(port);
-
-    const result = await httpReq('GET', port, '/relay/shutdown');
-
-    expect(result.statusCode).toBe(404);
-
-    // Clean up
-    await httpReq('POST', port, '/relay/shutdown', '{}');
-    consoleSpy.mockRestore();
-  });
-});
-
 function httpReqWithHeaders(
   method: string,
   port: number,
@@ -393,46 +379,6 @@ function httpReqWithHeaders(
 }
 
 describe('startRelayServer — Origin validation (CSRF protection)', () => {
-  it('POST /relay/shutdown with no Origin header is accepted (same-process call)', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const port = await getFreePort();
-    startRelayServer('test.quickbase.com', port);
-    await waitForPort(port);
-
-    const result = await httpReq('POST', port, '/relay/shutdown', '{}');
-    expect(result.statusCode).toBe(200);
-    consoleSpy.mockRestore();
-  });
-
-  it('POST /relay/shutdown with matching QB realm Origin is accepted', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const port = await getFreePort();
-    startRelayServer('test.quickbase.com', port);
-    await waitForPort(port);
-
-    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
-      'Origin': 'https://test.quickbase.com',
-    });
-    expect(result.statusCode).toBe(200);
-    consoleSpy.mockRestore();
-  });
-
-  it('POST /relay/shutdown with foreign Origin is rejected with 403', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const port = await getFreePort();
-    startRelayServer('test.quickbase.com', port);
-    await waitForPort(port);
-
-    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
-      'Origin': 'https://evil.example.com',
-    });
-    expect(result.statusCode).toBe(403);
-
-    // Clean up — send without Origin so the server actually shuts down
-    await httpReq('POST', port, '/relay/shutdown', '{}');
-    consoleSpy.mockRestore();
-  });
-
   it('POST /relay/result/:id with foreign Origin is rejected with 403', async () => {
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const port = await getFreePort();
@@ -445,22 +391,6 @@ describe('startRelayServer — Origin validation (CSRF protection)', () => {
     });
     expect(result.statusCode).toBe(403);
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
-    consoleSpy.mockRestore();
-  });
-
-  it('POST /relay/shutdown with empty-string Origin is rejected with 403 (sandboxed iframe / file:// page)', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const port = await getFreePort();
-    startRelayServer('test.quickbase.com', port);
-    await waitForPort(port);
-
-    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
-      'Origin': '',
-    });
-    expect(result.statusCode).toBe(403);
-
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 
@@ -476,38 +406,11 @@ describe('startRelayServer — Origin validation (CSRF protection)', () => {
     });
     expect(result.statusCode).toBe(403);
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 });
 
 describe('startRelayServer — EADDRINUSE retry', () => {
-  it('sends a POST /relay/shutdown probe to the occupying server on the first retry', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    let shutdownProbeReceived = false;
-
-    const port = await getFreePort();
-    const occupying = http.createServer((req, res) => {
-      if (req.method === 'POST' && req.url === '/relay/shutdown') {
-        shutdownProbeReceived = true;
-      }
-      res.writeHead(200).end('{}');
-    });
-    await new Promise<void>(r => occupying.listen(port, '127.0.0.1', () => r()));
-
-    startRelayServer('test.quickbase.com', port);
-
-    // The first EADDRINUSE fires in microseconds; the probe is an outbound
-    // localhost HTTP request that completes in single-digit milliseconds.
-    // 300 ms provides ample margin even on loaded CI machines.
-    await new Promise(r => setTimeout(r, 300));
-
-    expect(shutdownProbeReceived).toBe(true);
-
-    consoleSpy.mockRestore();
-    await new Promise<void>(r => occupying.close(() => r()));
-  }, 5_000);
-
   it('logs a warning after all retry attempts are exhausted', async () => {
     // This test exercises the full backoff sequence (500+500+1000+1000+2000 ms).
     // It necessarily takes ~5 s; the timeout is set to 12 s for CI headroom.
@@ -566,11 +469,13 @@ describe('RelayClient — registerLongPoll() replaces stale connection', () => {
     client.receiveHello('csrf', 'test.quickbase.com');
     const firstRes = {
       writableEnded: false,
+      on: jest.fn(), // registerLongPoll listens for the connection closing
       writeHead: jest.fn().mockReturnThis(),
       end: jest.fn(),
     } as any;
     const secondRes = {
       writableEnded: false,
+      on: jest.fn(), // registerLongPoll listens for the connection closing
       writeHead: jest.fn().mockReturnThis(),
       end: jest.fn(),
     } as any;
@@ -589,11 +494,13 @@ describe('RelayClient — registerLongPoll() replaces stale connection', () => {
     client.receiveHello('csrf', 'test.quickbase.com');
     const endedRes = {
       writableEnded: true,
+      on: jest.fn(), // registerLongPoll listens for the connection closing
       writeHead: jest.fn().mockReturnThis(),
       end: jest.fn(),
     } as any;
     const newRes = {
       writableEnded: false,
+      on: jest.fn(), // registerLongPoll listens for the connection closing
       writeHead: jest.fn().mockReturnThis(),
       end: jest.fn(),
     } as any;
@@ -613,6 +520,7 @@ describe('RelayClient — request() extraHeaders', () => {
     let capturedReq: any;
     const fakeRes = {
       writableEnded: false,
+      on: jest.fn(), // registerLongPoll listens for the connection closing
       writeHead: jest.fn().mockReturnThis(),
       end: jest.fn((body: string) => {
         capturedReq = JSON.parse(body);
@@ -640,7 +548,6 @@ describe('startRelayServer — GET /relay/status', () => {
     expect(result.statusCode).toBe(200);
     expect(result.body).toEqual({ active: false, realmUser: null });
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 
@@ -657,7 +564,6 @@ describe('startRelayServer — GET /relay/status', () => {
     expect(result.statusCode).toBe(200);
     expect(result.body).toMatchObject({ active: true, realmUser: 'test.quickbase.com' });
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 
@@ -675,13 +581,12 @@ describe('startRelayServer — GET /relay/status', () => {
     const statusResult = await httpReq('GET', port, '/relay/status');
     expect((statusResult.body as any).active).toBe(false);
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 });
 
 describe('startRelayServer — setup page', () => {
-  it('documents restart and reactivation recovery', async () => {
+  it('documents the shared daemon and reactivation recovery', async () => {
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const port = await getFreePort();
     startRelayServer('test.quickbase.com', port);
@@ -689,10 +594,10 @@ describe('startRelayServer — setup page', () => {
 
     const result = await httpReq('GET', port, '/setup');
     expect(result.statusCode).toBe(200);
-    expect(result.body).toEqual(expect.stringContaining('restart the MCP server completely'));
+    expect(result.body).toEqual(expect.stringContaining('shared background daemon'));
+    expect(result.body).not.toEqual(expect.stringContaining('restart the MCP server completely'));
     expect(result.body).toEqual(expect.stringContaining('relay%2Fhello'));
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 });
@@ -701,7 +606,7 @@ describe('startRelayServer — GET /relay/pending end-to-end relay', () => {
   it('delivers a queued request to a long-polling client and resolves the caller', async () => {
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const port = await getFreePort();
-    const client = startRelayServer('test.quickbase.com', port);
+    const { client } = startRelayServer('test.quickbase.com', port);
     await waitForPort(port);
 
     // Activate the relay
@@ -729,7 +634,6 @@ describe('startRelayServer — GET /relay/pending end-to-end relay', () => {
     const resolved = await relayPromise;
     expect(resolved).toEqual({ status: 200, data: { ok: true } });
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 });
@@ -760,7 +664,6 @@ describe('startRelayServer — readBody validation', () => {
     );
     expect(result.statusCode).toBe(400);
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 
@@ -773,27 +676,6 @@ describe('startRelayServer — readBody validation', () => {
     const result = await httpReq('POST', port, '/relay/hello', 'not-valid-json{{{');
     expect(result.statusCode).toBe(400);
 
-    await httpReq('POST', port, '/relay/shutdown', '{}');
-    consoleSpy.mockRestore();
-  });
-});
-
-describe('startRelayServer — empty-string Origin is not treated as same-process', () => {
-  it('POST /relay/shutdown with empty-string Origin header is rejected with 403', async () => {
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const port = await getFreePort();
-    startRelayServer('test.quickbase.com', port);
-    await waitForPort(port);
-
-    // An empty-value Origin header must not bypass the origin check.
-    // Only undefined (absent header) is treated as a same-process call.
-    const result = await httpReqWithHeaders('POST', port, '/relay/shutdown', '{}', {
-      'Origin': '',
-    });
-    expect(result.statusCode).toBe(403);
-
-    // Clean up — send without Origin header so the server actually shuts down
-    await httpReq('POST', port, '/relay/shutdown', '{}');
     consoleSpy.mockRestore();
   });
 });
