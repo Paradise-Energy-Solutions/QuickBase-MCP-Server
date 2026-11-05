@@ -16,6 +16,8 @@ export const MAX_RELAY_PATH_LENGTH = 2048;
 const API_PREFIX = '/api/';
 const PRINTABLE_ASCII = /^[\x21-\x7e]+$/;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+/** Header values must be ByteStrings (U+0000 to U+00FF); fetch() throws on anything above. */
+const NON_BYTE_STRING = /[^\u0000-\u00ff]/;
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_HEADER_COUNT = 20;
 const MAX_HEADER_VALUE_LENGTH = 1024;
@@ -88,6 +90,7 @@ export function validateRelayHeaders(headers: unknown): ValidationResult {
     if (typeof value !== 'string') return fail(`header ${name} must have a string value`);
     if (value.length > MAX_HEADER_VALUE_LENGTH) return fail(`header ${name} is too long`);
     if (CONTROL_CHARS.test(value)) return fail(`header ${name} contains control characters`);
+    if (NON_BYTE_STRING.test(value)) return fail(`header ${name} contains characters a browser cannot send in a header`);
   }
   return OK;
 }
