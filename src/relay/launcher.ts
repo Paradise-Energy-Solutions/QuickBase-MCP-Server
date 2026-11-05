@@ -161,8 +161,14 @@ async function tryReplace(opts: LauncherOptions, info: RelayInfo): Promise<'repl
   return 'replaced';
 }
 
-async function replaceLegacy(opts: LauncherOptions, status: { active: boolean; realmUser: string | null }): Promise<EnsureOutcome> {
+async function replaceLegacy(opts: LauncherOptions, firstStatus: { active: boolean; realmUser: string | null }): Promise<EnsureOutcome> {
   const { port } = opts;
+  let status = firstStatus;
+  // Look again right before the unauthenticated shutdown: a bookmarklet may have connected
+  // since the first probe, and an active relay must never be killed by surprise.
+  const latest = await (opts.probe ?? probeRelay)(port);
+  if (latest.kind !== 'legacy') return ensureRelayDaemon(opts); // it changed hands or went away meanwhile
+  status = latest.status;
   if (status.active && !opts.replaceLegacy) {
     throw new Error(
       `An old-build (in-process) relay holds port ${port} and has a bookmarklet connected (${status.realmUser ?? 'unknown host'}), ` +
@@ -275,6 +281,13 @@ async function startNew(opts: LauncherOptions): Promise<EnsureOutcome> {
         return { started: true };
       }
       if (Date.now() >= deadline) {
+        if (found.kind === 'foreign' || found.kind === 'legacy') {
+          // The port was free a moment ago and something else took it: say so instead of pointing at an empty log.
+          throw new Error(
+            `Port ${opts.port} was taken by another program while the relay daemon was starting. ` +
+              `Set QB_RELAY_PORT to a free port in your .env file and restart this Claude session, or stop whatever is using the port.`
+          );
+        }
         throw new Error(
           `The relay daemon did not become ready within ${Math.round((opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS) / 1000)} s. ` +
             `See its log: ${paths.log}`

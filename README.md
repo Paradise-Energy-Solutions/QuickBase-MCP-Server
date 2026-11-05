@@ -250,7 +250,7 @@ Pipelines only answer to a logged-in browser session, so the MCP server cannot c
 The relay runs as **one shared background daemon** on `127.0.0.1:3737` (`QB_RELAY_PORT`), not inside each MCP server:
 
 - Every Claude session starts its own MCP server process, but none of them binds the relay port. They talk to the daemon over authenticated loopback HTTP.
-- The first session that needs the relay starts the daemon (detached, so it survives that session closing). Later sessions find it running. If it has exited (idle timeout, crash, upgrade) the next Pipeline call starts it again.
+- Each Claude session asks for the daemon when it starts the MCP server, and the first one to ask starts it (detached, so it should survive that session closing; see Troubleshooting if it does not). Later sessions find it running. If it has exited (idle timeout, crash, upgrade) the next Pipeline call starts it again.
 - You click the bookmarklet **once per browser tab**, however many Claude sessions you open or close. If the daemon restarts, an already-open Pipelines tab reconnects by itself within a few seconds.
 - Requests from all sessions share the one browser connection and are served in order.
 

@@ -363,6 +363,36 @@ describe('a legacy in-process relay (old MCP build) holds the port', () => {
     expect(fake.spawn).not.toHaveBeenCalled();
   });
 
+  it('re-checks right before the shutdown: a bookmarklet that connected since the first probe is not killed', async () => {
+    const { port, requests } = await occupy(legacyRelay(true));
+    const fake = fakeSpawn();
+    let calls = 0;
+    const probe = async () => {
+      calls++; // the first probe saw it inactive; by the second it is active
+      return { kind: 'legacy' as const, status: { active: calls > 1, realmUser: 'x.quickbase.com' } };
+    };
+
+    const error = await ensureRelayDaemon(options(port, { spawn: fake.spawn as unknown as SpawnFn, probe })).catch((e: Error) => e);
+
+    expect((error as Error).message).toContain('QB_RELAY_REPLACE_LEGACY');
+    expect(requests.some((r) => r.startsWith('POST'))).toBe(false);
+    expect(fake.spawn).not.toHaveBeenCalled();
+  });
+
+  it('says the port was taken (not "see the log") when something else grabs it while the daemon starts', async () => {
+    const port = await getFreePort();
+    const fake = fakeSpawn();
+    let calls = 0;
+    const probe = async () => (++calls === 1 ? { kind: 'none' as const } : { kind: 'foreign' as const });
+
+    const error = await ensureRelayDaemon(
+      options(port, { spawn: fake.spawn as unknown as SpawnFn, probe, readyTimeoutMs: 300 })
+    ).catch((e: Error) => e);
+
+    expect((error as Error).message).toContain('taken by another program');
+    expect((error as Error).message).toContain('QB_RELAY_PORT');
+  });
+
   it('replaces an ACTIVE one when QB_RELAY_REPLACE_LEGACY is set', async () => {
     const { port, requests } = await occupy(legacyRelay(true));
     const fake = fakeSpawn(async () => void (await runningDaemon(port, SAME_BUILD)));
