@@ -180,6 +180,10 @@ export async function stopDaemon(ctx: CliContext): Promise<number> {
   while (Date.now() < deadline && (await probeRelay(port, 500)).kind !== 'none') {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  if ((await probeRelay(port, 500)).kind !== 'none') {
+    out(`The relay daemon on port ${port} (pid ${probe.info.pid}) accepted the stop request but is still answering; check again with: npm run relay:status`);
+    return 1;
+  }
   out(`Stopped the relay daemon on port ${port} (pid ${probe.info.pid}).`);
   return 0;
 }

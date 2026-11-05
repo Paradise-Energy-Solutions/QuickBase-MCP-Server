@@ -60,6 +60,9 @@ export interface DaemonSettings {
   lockWaitMs: number;
 }
 
+/** setTimeout fires after 1 ms for any delay above this (2^31-1 ms, about 24.8 days). */
+const MAX_TIMER_MS = 2_147_483_647;
+
 function positiveNumber(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw.trim() === '') return fallback;
   const value = Number(raw);
@@ -83,6 +86,17 @@ function idleMinutes(raw: string | undefined): number {
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_IDLE_MINUTES; // 0 means "never"
 }
 
+/** A timer delay a Node timer can honour; longer values are capped instead of firing at once. */
+function timerMs(ms: number): number {
+  return Math.min(Math.round(ms), MAX_TIMER_MS);
+}
+
+/** Minutes of idleness before the daemon exits; 0 or a value too long for a timer means "never". */
+function idleMsFrom(minutes: number): number {
+  const ms = Math.round(minutes * 60_000);
+  return ms > MAX_TIMER_MS ? 0 : ms;
+}
+
 export function daemonSettingsFromEnv(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
@@ -96,9 +110,9 @@ export function daemonSettingsFromEnv(
     realm,
     port: port(env.QB_RELAY_PORT),
     stateDir: resolveStateDir(env, platform, home),
-    idleMs: Math.round(idleMinutes(env.QB_RELAY_IDLE_MINUTES) * 60_000),
-    lockTtlMs: Math.round(positiveNumber(env.QB_RELAY_LOCK_TTL_SECONDS, DEFAULT_LOCK_TTL_SECONDS) * 1000),
-    lockWaitMs: Math.round(positiveNumber(env.QB_RELAY_LOCK_WAIT_SECONDS, DEFAULT_LOCK_WAIT_SECONDS) * 1000),
+    idleMs: idleMsFrom(idleMinutes(env.QB_RELAY_IDLE_MINUTES)),
+    lockTtlMs: timerMs(positiveNumber(env.QB_RELAY_LOCK_TTL_SECONDS, DEFAULT_LOCK_TTL_SECONDS) * 1000),
+    lockWaitMs: timerMs(positiveNumber(env.QB_RELAY_LOCK_WAIT_SECONDS, DEFAULT_LOCK_WAIT_SECONDS) * 1000),
   };
 }
 

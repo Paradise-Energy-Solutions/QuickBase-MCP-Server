@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { startRelayServer } from '../src/relay/server';
 import { FakeBookmarklet, TEST_ORIGIN, TEST_REALM, TEST_SECRET, TestDaemon, makeTestInfo, startTestDaemon } from './helpers/daemonHarness';
 import { getFreePort, httpReq, httpReqFull } from './helpers/relayHarness';
@@ -541,5 +542,50 @@ describe('plain (non-daemon) mode', () => {
     expect((await httpReq('POST', port, '/relay/stop', '{}')).statusCode).toBe(404);
     expect((await httpReq('GET', port, '/relay/status')).body).toEqual({ active: false, realmUser: null });
     await server.close();
+  });
+});
+
+describe('callers that disconnect while waiting behind the lock', () => {
+  /** Sends a control POST and destroys the connection after `afterMs`, without waiting for an answer. */
+  function postAndAbandon(d: TestDaemon, path: string, body: unknown, afterMs: number): void {
+    const data = JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1',
+      port: d.port,
+      path,
+      method: 'POST',
+      agent: false,
+      headers: { ...d.authHeaders, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+    });
+    req.on('error', () => {});
+    req.end(data);
+    setTimeout(() => req.destroy(), afterMs);
+  }
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('an acquire granted after its caller left is released again, so nobody is locked out', async () => {
+    const d = await daemon({ lockWaitMs: 2000 });
+    expect((await d.call('/relay/lock/acquire', { owner: 'owner-a' }, d.authHeaders)).statusCode).toBe(200);
+
+    postAndAbandon(d, '/relay/lock/acquire', { owner: 'owner-b' }, 100);
+    await sleep(300);
+    await d.call('/relay/lock/release', { owner: 'owner-a' }, d.authHeaders);
+    await sleep(200);
+
+    expect((await httpReqFull('GET', d.port, '/relay/status')).body).toMatchObject({ lock: { held: false } });
+  });
+
+  it('an rpc that waited behind the lock is not run once its caller has left', async () => {
+    const d = await daemon({ lockWaitMs: 2000 });
+    const b = await bookmarklet(d);
+    expect((await d.call('/relay/lock/acquire', { owner: 'owner-a' }, d.authHeaders)).statusCode).toBe(200);
+
+    postAndAbandon(d, '/relay/rpc', { owner: 'owner-b', path: '/api/v2/pipelines/x', method: 'POST', body: { write: 1 } }, 100);
+    await sleep(300);
+    await d.call('/relay/lock/release', { owner: 'owner-a' }, d.authHeaders);
+    await sleep(300);
+
+    expect(b.seen).toHaveLength(0);
   });
 });
