@@ -141,6 +141,15 @@ describe('validateRelayHeaders', () => {
   });
 });
 
+describe('validateRelayHeaders: values a browser cannot send', () => {
+  it('rejects a value outside the ByteString range (fetch would throw on it) and accepts Latin-1', () => {
+    const euro = String.fromCharCode(0x20ac);
+    const eAcute = String.fromCharCode(0xe9);
+    expect(validateRelayHeaders({ 'X-Note': euro }).ok).toBe(false);
+    expect(validateRelayHeaders({ 'X-Note': eAcute }).ok).toBe(true);
+  });
+});
+
 describe('isHostAllowed', () => {
   it.each(['127.0.0.1:3737', 'localhost:3737', 'LOCALHOST:3737', 'Localhost:3737'])(
     'accepts %s for port 3737',

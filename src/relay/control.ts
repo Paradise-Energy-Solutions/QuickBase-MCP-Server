@@ -66,7 +66,8 @@ export interface ControlRelay {
     method: string,
     body?: unknown,
     extraHeaders?: Record<string, string>,
-    responseType?: RelayResponseType
+    responseType?: RelayResponseType,
+    signal?: AbortSignal
   ): Promise<RelayResult>;
   readonly isActive: boolean;
   readonly currentUser: string | null;
@@ -288,6 +289,11 @@ export class Control {
     const method = body.method as string;
     const started = Date.now();
     this.markClient(owner);
+    // Withdraw a queued request if the caller drops the connection before the bookmarklet takes it.
+    const caller = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) caller.abort();
+    });
 
     const admission = await this.lock
       .admit(owner, this.lockWaitMs, () => {
@@ -299,7 +305,8 @@ export class Control {
           method,
           body.body,
           body.headers as Record<string, string> | undefined,
-          body.responseType as RelayResponseType | undefined
+          body.responseType as RelayResponseType | undefined,
+          caller.signal
         );
       })
       .catch((err: unknown) => err as Error);
@@ -397,9 +404,12 @@ export class Control {
       const admission = await this.lock.admit(EXPIRY_OWNER, 0, () =>
         this.deps.client.request('/api/impersonation/end', 'POST', {})
       );
-      if (admission.admitted) await admission.value;
+      if (!admission.admitted) throw new Error('the lock was not available for the cleanup');
+      const result = await admission.value;
+      if (result.status === 0 || result.status >= 400) throw new Error(`the end request was answered with status ${result.status}`);
     } catch (err) {
-      this.deps.log(`could not end the abandoned impersonation: ${err instanceof Error ? err.message : String(err)}`);
+      this.deps.log(`could not end the abandoned impersonation (will retry while the lock is held): ${err instanceof Error ? err.message : String(err)}`);
+      throw err; // the lock keeps everyone waiting and retries instead of handing over a live impersonation
     }
   }
 }

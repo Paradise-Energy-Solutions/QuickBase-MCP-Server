@@ -36,8 +36,10 @@ export type Admission<T> =
 export interface ImpersonationLockOptions {
   /** A hold with no activity (acquire, release, touch or admitted request) for this long is abandoned. */
   ttlMs: number;
-  /** Cleanup run when a hold expires, before anyone else is served. */
+  /** Cleanup run when a hold expires, before anyone else is served. A rejection means "not done yet": it is retried. */
   onExpire?: (expiredOwner: string) => Promise<void> | void;
+  /** Delay before a failed cleanup is retried while the cleanup hold lasts (default 5 s, never more than ttlMs). */
+  cleanupRetryMs?: number;
 }
 
 interface Waiter {
@@ -52,11 +54,14 @@ export class ImpersonationLock {
   private state: LockHolder | null = null;
   private readonly waiters: Waiter[] = [];
   private ttlTimer: NodeJS.Timeout | undefined;
+  private cleanupRetryTimer: NodeJS.Timeout | undefined;
+  private readonly cleanupRetryMs: number;
   private readonly ttlMs: number;
   private readonly onExpire?: (expiredOwner: string) => Promise<void> | void;
 
   constructor(opts: ImpersonationLockOptions) {
     this.ttlMs = opts.ttlMs;
+    this.cleanupRetryMs = Math.min(opts.cleanupRetryMs ?? 5_000, opts.ttlMs);
     this.onExpire = opts.onExpire;
   }
 
@@ -141,6 +146,8 @@ export class ImpersonationLock {
   shutdown(): void {
     if (this.ttlTimer) clearTimeout(this.ttlTimer);
     this.ttlTimer = undefined;
+    if (this.cleanupRetryTimer) clearTimeout(this.cleanupRetryTimer);
+    this.cleanupRetryTimer = undefined;
     this.state = null;
     for (const waiter of this.waiters.splice(0)) {
       clearTimeout(waiter.timer);
@@ -154,6 +161,8 @@ export class ImpersonationLock {
   }
 
   private clearHold(): void {
+    if (this.cleanupRetryTimer) clearTimeout(this.cleanupRetryTimer);
+    this.cleanupRetryTimer = undefined;
     this.state = null;
     if (this.ttlTimer) clearTimeout(this.ttlTimer);
     this.ttlTimer = undefined;
@@ -221,15 +230,27 @@ export class ImpersonationLock {
     const cleanupHold: LockHolder = { owner: EXPIRY_OWNER, since: Date.now(), depth: 1 };
     this.state = cleanupHold;
     this.armTtl(); // bounds how long the cleanup may hold everyone up
-    void Promise.resolve()
-      .then(() => this.onExpire?.(expired.owner))
-      .catch(() => undefined)
-      .then(() => {
-        // Only this expiry's own hold: a late-settling cleanup must not free a newer one.
-        if (this.state === cleanupHold) {
-          this.clearHold();
-          this.drain();
-        }
-      });
+    const attempt = (): void => {
+      void Promise.resolve()
+        .then(() => this.onExpire?.(expired.owner))
+        .then(
+          () => true,
+          () => false
+        )
+        .then((done) => {
+          // Only this expiry's own hold: a late-settling cleanup must not free a newer one.
+          if (this.state !== cleanupHold) return;
+          if (done) {
+            this.clearHold();
+            this.drain();
+            return;
+          }
+          // Not done (for example the browser was unreachable): the impersonation may still be live,
+          // so keep everyone waiting and try again. The hold's own TTL bounds the wait.
+          this.cleanupRetryTimer = setTimeout(attempt, this.cleanupRetryMs);
+          this.cleanupRetryTimer.unref?.();
+        });
+    };
+    attempt();
   }
 }

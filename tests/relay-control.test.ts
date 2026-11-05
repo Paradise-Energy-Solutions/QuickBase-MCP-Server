@@ -576,6 +576,19 @@ describe('callers that disconnect while waiting behind the lock', () => {
     expect((await httpReqFull('GET', d.port, '/relay/status')).body).toMatchObject({ lock: { held: false } });
   });
 
+  it('an admitted rpc still waiting for the bookmarklet is withdrawn when its caller leaves, never run late', async () => {
+    const d = await daemon();
+    d.client.receiveHello('tok', TEST_REALM); // active, but nobody is polling yet: the request just queues
+
+    postAndAbandon(d, '/relay/rpc', { owner: 'owner-a', path: '/api/impersonation/realm/start', method: 'POST', body: { qb_user_id: '1' } }, 100);
+    await sleep(300);
+    expect((await httpReqFull('GET', d.port, '/relay/status')).body).toMatchObject({ queued: 0, pending: 0 });
+    const b = await bookmarklet(d); // the bookmarklet shows up later
+    await sleep(300);
+
+    expect(b.seen).toHaveLength(0);
+  });
+
   it('an rpc that waited behind the lock is not run once its caller has left', async () => {
     const d = await daemon({ lockWaitMs: 2000 });
     const b = await bookmarklet(d);

@@ -253,6 +253,19 @@ describe('explicit impersonation tools (start and end are separate tool calls)',
     expect(rec.events).toEqual(['acquire', `request ${START}`, `request ${END}`]);
   });
 
+  it('a start answered with status 0 (network failure) may have run: it is undone before the lock is released', async () => {
+    const rec = makeRecorder();
+    (rec.transport.request as jest.Mock).mockImplementationOnce(async (path: string) => {
+      rec.events.push(`request ${path}`);
+      return { status: 0, data: null, error: 'network error' };
+    });
+    const client = makeClient(rec);
+
+    await expect(client.startPipelineImpersonation('123')).rejects.toThrow(/network error/);
+
+    expect(rec.events).toEqual(['acquire', `request ${START}`, `request ${END}`, 'release']);
+  });
+
   it('a start the relay never sent (not active) releases the lock without an undo request', async () => {
     const rec = makeRecorder();
     (rec.transport.request as jest.Mock).mockImplementation(async (path: string) => {

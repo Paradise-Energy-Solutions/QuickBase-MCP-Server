@@ -1265,34 +1265,34 @@ export class QuickBaseClient {
     // The shared relay serves every MCP process: hold its exclusive lock from here
     // until endPipelineImpersonation so no other process runs as this identity.
     await relay.acquireExclusive?.();
-    let result;
+    let failure: unknown;
+    let mayHaveRun = false; // the start may have reached the browser even though the call failed
     try {
-      result = await relay.request(
+      const result = await relay.request(
         '/api/impersonation/realm/start',
         'POST',
         { qb_user_id: qbUserId }
       );
-    } catch (err) {
-      // The start may or may not have run in the browser. Unless the relay never sent it,
-      // undo it while still holding the lock, and release only once that succeeded: if the
-      // lock were released with an impersonation still active, another session's requests
-      // would run as this identity. A lock that stays held is ended by the daemon on expiry.
-      const kind = (err as { kind?: string } | null)?.kind; // RelayError.kind: set by the shared relay's transport
-      const neverSent = kind !== undefined && ['not_active', 'invalid', 'busy'].includes(kind);
-      try {
-        if (!neverSent) this.unwrapRelayResult(await relay.request('/api/impersonation/end', 'POST', {})); // an HTTP error answer is a failed undo too
-        await relay.releaseExclusive?.();
-      } catch {
-        /* keep the lock; the daemon ends the abandoned impersonation when it expires */
-      }
-      throw err;
-    }
-    try {
+      // Status 0 is a network-level failure: the browser's fetch may have reached QuickBase and lost the answer.
+      mayHaveRun = result.status === 0;
       return this.unwrapRelayResult(result);
     } catch (err) {
-      await relay.releaseExclusive?.().catch(() => {}); // the browser answered with an error: nothing started
-      throw err;
+      failure = err;
+      const kind = (err as { kind?: string } | null)?.kind; // RelayError.kind: set by the shared relay's transport
+      const neverSent = kind !== undefined && ['not_active', 'invalid', 'busy'].includes(kind);
+      if (kind !== undefined) mayHaveRun = !neverSent;
+      else mayHaveRun = mayHaveRun || !(err instanceof McpError); // an HTTP error answer (McpError) means nothing started
     }
+    // Release the lock only when no impersonation can be left running: undo a start that may have
+    // run, and keep the lock if the undo fails too (the daemon ends it when the hold expires), because
+    // releasing with an impersonation active would let another session run as this identity.
+    try {
+      if (mayHaveRun) this.unwrapRelayResult(await relay.request('/api/impersonation/end', 'POST', {}));
+      await relay.releaseExclusive?.();
+    } catch {
+      /* keep the lock */
+    }
+    throw failure;
   }
 
   async endPipelineImpersonation(): Promise<any> {
