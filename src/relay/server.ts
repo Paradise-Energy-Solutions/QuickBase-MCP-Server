@@ -140,7 +140,8 @@ export class RelayClient implements RelayTransport {
     method: string,
     body?: unknown,
     extraHeaders?: Record<string, string>,
-    responseType: RelayResponseType = 'json'
+    responseType: RelayResponseType = 'json',
+    signal?: AbortSignal
   ): Promise<RelayResult> {
     // The bookmarklet does fetch(PL + path) with the user's CSRF token, so the
     // path is validated before anything can be queued, ahead of the active check.
@@ -153,6 +154,21 @@ export class RelayClient implements RelayTransport {
     const req: RelayRequest = { id: randomUUID(), path, method, body, headers: extraHeaders, responseType };
 
     return new Promise<RelayResult>((resolve, reject) => {
+      // The caller gave up (its connection dropped): withdraw the request if the bookmarklet has not
+      // taken it yet, so it can never run later with nobody holding the lock that covered it.
+      const onAbort = (): void => {
+        if (!this.queue.some((queued) => queued.id === req.id)) return; // already handed to the browser
+        this.queue = this.queue.filter((queued) => queued.id !== req.id);
+        const entry = this.pending.get(req.id);
+        if (entry) clearTimeout(entry.timer);
+        this.pending.delete(req.id);
+        reject(new RelayError('internal', ErrorCode.InternalError, 'The caller disconnected before the request was sent to the browser'));
+      };
+      if (signal?.aborted) {
+        reject(new RelayError('internal', ErrorCode.InternalError, 'The caller disconnected before the request was sent to the browser'));
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
       const timer = setTimeout(() => {
         this.pending.delete(req.id);
         // Withdraw it from the queue too: a request nobody is waiting for must
