@@ -346,6 +346,28 @@ describe('ImpersonationLock', () => {
     });
   });
 
+  describe('a late-settling cleanup from an earlier expiry', () => {
+    it('does not free a newer expiry hold', async () => {
+      let settleFirst: () => void = () => {};
+      const onExpire = jest
+        .fn()
+        .mockImplementationOnce(() => new Promise<void>((resolve) => { settleFirst = resolve; }))
+        .mockImplementation(() => new Promise<void>(() => {})); // the second cleanup never settles
+      makeLock(onExpire);
+      await lock.acquire('A', 0);
+      await jest.advanceTimersByTimeAsync(TTL_MS); // A expires, cleanup 1 starts and sticks
+      await jest.advanceTimersByTimeAsync(TTL_MS); // stuck cleanup freed
+      await lock.acquire('B', 0);
+      await jest.advanceTimersByTimeAsync(TTL_MS); // B expires, cleanup 2 holds the lock
+      expect(lock.holder?.owner).toBe(EXPIRY_OWNER);
+
+      settleFirst(); // cleanup 1 finally settles
+      await jest.advanceTimersByTimeAsync(0);
+
+      expect(lock.holder?.owner).toBe(EXPIRY_OWNER); // still held for cleanup 2
+    });
+  });
+
   describe('shutdown', () => {
     it('settles every waiter as not granted and clears all timers', async () => {
       makeLock();
