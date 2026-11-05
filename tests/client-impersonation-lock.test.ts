@@ -240,6 +240,19 @@ describe('explicit impersonation tools (start and end are separate tool calls)',
     expect(rec.events).toEqual(['acquire', `request ${START}`, `request ${END}`]);
   });
 
+  it('a start that fails in transit keeps the lock when the undo is answered with an HTTP error', async () => {
+    const rec = makeRecorder({ failPaths: [END] });
+    (rec.transport.request as jest.Mock).mockImplementationOnce(async (path: string) => {
+      rec.events.push(`request ${path}`);
+      throw relayFailure('unavailable', 'daemon stopped answering');
+    });
+    const client = makeClient(rec);
+
+    await expect(client.startPipelineImpersonation('123')).rejects.toThrow(/stopped answering/);
+
+    expect(rec.events).toEqual(['acquire', `request ${START}`, `request ${END}`]);
+  });
+
   it('a start the relay never sent (not active) releases the lock without an undo request', async () => {
     const rec = makeRecorder();
     (rec.transport.request as jest.Mock).mockImplementation(async (path: string) => {

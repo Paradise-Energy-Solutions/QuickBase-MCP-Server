@@ -218,13 +218,15 @@ export class ImpersonationLock {
       return;
     }
 
-    this.state = { owner: EXPIRY_OWNER, since: Date.now(), depth: 1 };
+    const cleanupHold: LockHolder = { owner: EXPIRY_OWNER, since: Date.now(), depth: 1 };
+    this.state = cleanupHold;
     this.armTtl(); // bounds how long the cleanup may hold everyone up
     void Promise.resolve()
       .then(() => this.onExpire?.(expired.owner))
       .catch(() => undefined)
       .then(() => {
-        if (this.state?.owner === EXPIRY_OWNER) {
+        // Only this expiry's own hold: a late-settling cleanup must not free a newer one.
+        if (this.state === cleanupHold) {
           this.clearHold();
           this.drain();
         }
