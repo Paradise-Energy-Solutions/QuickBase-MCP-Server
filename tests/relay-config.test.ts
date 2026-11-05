@@ -155,3 +155,17 @@ describe('loadRelayEnvFile (manual start: copy only relay settings out of .env)'
     expect(env).toEqual({});
   });
 });
+
+describe('timer limits', () => {
+  const base = { QB_REALM: 'x.quickbase.com' } as NodeJS.ProcessEnv;
+
+  it('treats an idle time too long for a timer as "never" instead of firing at once', () => {
+    expect(daemonSettingsFromEnv({ ...base, QB_RELAY_IDLE_MINUTES: '999999' }).idleMs).toBe(0);
+  });
+
+  it('caps the lock TTL and wait at what a timer can honour', () => {
+    const settings = daemonSettingsFromEnv({ ...base, QB_RELAY_LOCK_TTL_SECONDS: '99999999', QB_RELAY_LOCK_WAIT_SECONDS: '99999999' });
+    expect(settings.lockTtlMs).toBe(2_147_483_647);
+    expect(settings.lockWaitMs).toBe(2_147_483_647);
+  });
+});

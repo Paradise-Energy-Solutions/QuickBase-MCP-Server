@@ -183,7 +183,7 @@ export class RemoteRelayClient implements RelayTransport {
           continue;
         }
         throw this.unavailable(
-          "The relay daemon rejected this session's credentials. If an older daemon is still running with a different secret, stop it with: npm run relay:stop"
+          "The relay daemon rejected this session's credentials. The daemon was probably started by another user or with a different QB_RELAY_STATE_DIR (npm run relay:stop uses this session's secret and would be rejected too): stop that daemon from the account or state directory that started it, or set QB_RELAY_PORT to a different port."
         );
       }
       return response;
