@@ -124,7 +124,9 @@ export function ensureSecret(stateDir: string, opts: EnsureSecretOptions = {}): 
     if (secret) return secret;
     if (i < attempts - 1) sleep(READ_RETRY_DELAY_MS);
   }
-  throw new Error(`Relay secret file ${file} is empty; another process may still be writing it.`);
+  throw new Error(
+    `Relay secret file ${file} is empty. Another process may still be writing it; if this persists (a crash can leave it empty), delete the file and retry: a new secret is created automatically.`,
+  );
 }
 
 /** Reads the existing secret without creating one. Null when absent or still empty. */
