@@ -6,8 +6,8 @@ const flush = () => jest.advanceTimersByTimeAsync(0);
 describe('ImpersonationLock', () => {
   let lock: ImpersonationLock;
 
-  function makeLock(onExpire?: (owner: string) => Promise<void> | void): ImpersonationLock {
-    lock = new ImpersonationLock({ ttlMs: TTL_MS, onExpire });
+  function makeLock(onExpire?: (owner: string) => Promise<void> | void, cleanupRetryMs?: number): ImpersonationLock {
+    lock = new ImpersonationLock({ ttlMs: TTL_MS, onExpire, cleanupRetryMs });
     return lock;
   }
 
@@ -321,14 +321,38 @@ describe('ImpersonationLock', () => {
       expect(lock.holder?.owner).toBe('B');
     });
 
-    it('still frees the lock when the cleanup fails', async () => {
-      makeLock(() => Promise.reject(new Error('bookmarklet gone')));
+    it('keeps the lock held and retries when the cleanup fails, handing over once it succeeds', async () => {
+      const onExpire = jest
+        .fn<Promise<void>, [string]>()
+        .mockRejectedValueOnce(new Error('bookmarklet gone'))
+        .mockResolvedValue(undefined);
+      makeLock(onExpire, 100);
+      await lock.acquire('A', 0);
+      let granted = false;
+      void lock.acquire('B', 60_000).then(() => { granted = true; });
+
+      await jest.advanceTimersByTimeAsync(TTL_MS); // expiry: first cleanup fails
+      expect(granted).toBe(false);
+      expect(lock.holder?.owner).toBe(EXPIRY_OWNER);
+      await jest.advanceTimersByTimeAsync(100); // retry succeeds
+
+      expect(granted).toBe(true);
+      expect(onExpire).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops retrying a cleanup that keeps failing once the cleanup hold itself expires', async () => {
+      const onExpire = jest.fn(() => Promise.reject(new Error('bookmarklet gone')));
+      makeLock(onExpire, 100);
       await lock.acquire('A', 0);
       const waiting = lock.acquire('B', 60_000);
 
-      await jest.advanceTimersByTimeAsync(TTL_MS);
+      await jest.advanceTimersByTimeAsync(TTL_MS * 2); // cleanup hold bounded by one more TTL
 
       await expect(waiting).resolves.toBe(true);
+      lock.release('B'); // B's own hold must not expire into a second cleanup
+      const calls = onExpire.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(TTL_MS);
+      expect(onExpire.mock.calls.length).toBe(calls); // no retry timer left behind
     });
 
     it('frees a stuck cleanup hold after another TTL without running the cleanup again', async () => {
