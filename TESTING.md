@@ -88,6 +88,22 @@ npx jest --testNamePattern="should create"
 **Test Count**: 37 tests
 **Coverage**: 89.79% (core client methods fully tested)
 
+### Pipeline Relay Tests (`relay*.test.ts`, `client-impersonation-lock.test.ts`)
+- `relay-validation`, `relay-secret`, `relay-config`: request/path/header validation, Host/Origin/Fetch Metadata checks, the per-user secret and settings
+- `relay-lock`, `client-impersonation-lock`: the exclusive impersonation lock and how `QuickBaseClient` holds it
+- `relay-control`, `relay-hardening`, `relay-probe`, `relay.test.ts`: the relay server and the daemon's authenticated control API
+- `relay-bookmarklet`: runs the **real bookmarklet source** in a `vm` sandbox against a real in-process daemon, including a daemon restart on the same port
+- `relay-daemon-runtime`, `relay-daemon-cli`, `relay-remote`, `relay-launcher`: the daemon process, its commands, the MCP-side client and the launcher
+
+All relay tests bind OS-assigned ports and temp state directories; none touches the live relay port.
+
+**Integration smoke test (real processes).** `tests/integration/relay-daemon-smoke.test.ts` spawns the compiled daemon and is skipped unless a scratch port is given. Build first, and **never use your real relay port (3737; the test refuses it)**:
+
+```bash
+npm run build
+QB_RELAY_SMOKE_PORT=3799 npx jest tests/integration/relay-daemon-smoke.test.ts
+```
+
 ### Client Utilities Tests (`client-utilities.test.ts`)
 - Report management (getReports, runReport)
 - Utility methods (testConnection, searchRecords)
