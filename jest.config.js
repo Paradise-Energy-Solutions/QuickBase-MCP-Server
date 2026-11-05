@@ -21,6 +21,7 @@ export default {
     'src/**/*.ts',
     '!src/**/*.d.ts',
     '!src/index.ts', // Entry point with server setup
+    '!src/relay/daemon.ts', // Relay daemon entry point (wiring only; logic is in the other relay modules)
   ],
   coverageThreshold: {
     global: {
